@@ -17,6 +17,7 @@ Usage:
     python main.py --sources archdaily dezeen   # Run specific sources
     python main.py --rss-only               # Skip scraping
     python main.py --sources dezeen --rss-only  # Dezeen RSS only
+    python main.py --tier 1                 # Run only Tier 1 sources
 
 Environment Variables (set in Railway):
     OPENAI_API_KEY          - OpenAI API key for GPT-4o-mini
@@ -50,11 +51,47 @@ from telegram_bot import TelegramBot
 
 # Import prompts and config
 from prompts.summarize import SUMMARIZE_PROMPT_TEMPLATE
-from config.sources import SOURCES, get_source_config
+from config.sources import SOURCES, get_source_config, get_sources_by_tier
 
 # Default configuration
 DEFAULT_HOURS_LOOKBACK = 24
-DEFAULT_SOURCES = ["archdaily", "dezeen"]  # Sources to monitor by default
+
+# All 20 working sources - organized by tier
+# Tier 1: Global primary sources (high volume, always monitored)
+TIER_1_SOURCES = [
+    "archdaily",
+    "dezeen", 
+    "designboom",
+    "architects_journal",
+]
+
+# Tier 2: Regional/specialty sources
+TIER_2_SOURCES = [
+    # North America
+    "metropolis",
+    "canadian_architect",
+    "design_milk",
+    "leibal",
+    "construction_specifier",
+    # Europe
+    "architectural_review",
+    "landezine",
+    "aasarchitecture",
+    # Asia-Pacific
+    "yellowtrace",
+    "architectureau",
+    "architecture_now",
+    "architecture_update",
+    "indesignlive_sg",
+    # Latin America
+    "archdaily_brasil",
+    "arquine",
+    # Middle East
+    "parametric_architecture",
+]
+
+# Default: ALL sources (Tier 1 + Tier 2)
+DEFAULT_SOURCES = TIER_1_SOURCES + TIER_2_SOURCES
 
 
 # =============================================================================
@@ -263,6 +300,7 @@ async def run_pipeline(
     hours: int = DEFAULT_HOURS_LOOKBACK,
     skip_scraping: bool = False,
     skip_telegram: bool = False,
+    tier: Optional[int] = None,
 ):
     """
     Run the complete news monitoring pipeline.
@@ -272,10 +310,16 @@ async def run_pipeline(
         hours: How many hours back to look for articles
         skip_scraping: Skip Browserless scraping (use RSS data only)
         skip_telegram: Skip sending to Telegram
+        tier: If specified, only process sources from this tier (1 or 2)
     """
     # Determine sources to process
     if source_ids is None:
-        source_ids = DEFAULT_SOURCES
+        if tier == 1:
+            source_ids = TIER_1_SOURCES
+        elif tier == 2:
+            source_ids = TIER_2_SOURCES
+        else:
+            source_ids = DEFAULT_SOURCES
 
     # Filter to only sources with RSS feeds
     valid_sources = []
@@ -293,7 +337,7 @@ async def run_pipeline(
     print(f"\n{'=' * 60}")
     print("🏛️ ArchNews Monitor (Multi-Source)")
     print(f"📅 {datetime.now().strftime('%B %d, %Y at %H:%M')}")
-    print(f"📡 Sources: {', '.join(valid_sources)}")
+    print(f"📡 Sources: {len(valid_sources)} ({', '.join(valid_sources[:5])}{'...' if len(valid_sources) > 5 else ''})")
     print(f"⏰ Looking back: {hours} hours")
     print(f"{'=' * 60}")
 
@@ -331,7 +375,7 @@ async def run_pipeline(
         for article in articles:
             sid = article.get("source_id", "unknown")
             by_source[sid] = by_source.get(sid, 0) + 1
-        for sid, count in by_source.items():
+        for sid, count in sorted(by_source.items()):
             print(f"      - {sid}: {count}")
 
         # =================================================================
@@ -423,7 +467,8 @@ async def run_pipeline(
         print(f"\n{'=' * 60}")
         print("✅ Pipeline completed!")
         print(f"   📰 Total articles: {len(articles)}")
-        for sid, count in by_source.items():
+        print(f"   📡 Sources processed: {len(by_source)}")
+        for sid, count in sorted(by_source.items()):
             print(f"      - {sid}: {count}")
         hero_saved = sum(1 for a in articles if a.get("hero_image", {}).get("r2_path"))
         if hero_saved > 0:
@@ -461,7 +506,15 @@ def parse_args():
         "--sources",
         nargs="+",
         default=None,
-        help=f"Sources to fetch (default: {', '.join(DEFAULT_SOURCES)})"
+        help=f"Sources to fetch (default: all {len(DEFAULT_SOURCES)} sources)"
+    )
+
+    parser.add_argument(
+        "--tier",
+        type=int,
+        choices=[1, 2],
+        default=None,
+        help="Only process sources from this tier (1=primary, 2=regional)"
     )
 
     parser.add_argument(
@@ -493,13 +546,25 @@ def parse_args():
 
 
 def list_available_sources():
-    """Print all available sources."""
+    """Print all available sources organized by tier."""
     print("\nAvailable sources:")
-    print("=" * 50)
-    for source_id, config in SOURCES.items():
+    print("=" * 60)
+
+    print("\n📌 TIER 1 - Primary Sources (always monitored):")
+    for source_id in TIER_1_SOURCES:
+        config = SOURCES.get(source_id, {})
         name = config.get("name", source_id)
-        rss = "✅ RSS" if config.get("rss_url") else "❌ No RSS"
-        print(f"  {source_id:20} {name:25} {rss}")
+        region = config.get("region", "global")
+        print(f"  {source_id:25} {name:30} [{region}]")
+
+    print("\n📍 TIER 2 - Regional/Specialty Sources:")
+    for source_id in TIER_2_SOURCES:
+        config = SOURCES.get(source_id, {})
+        name = config.get("name", source_id)
+        region = config.get("region", "global")
+        print(f"  {source_id:25} {name:30} [{region}]")
+
+    print(f"\n📊 Total: {len(DEFAULT_SOURCES)} sources")
     print()
 
 
@@ -514,4 +579,5 @@ if __name__ == "__main__":
             hours=args.hours,
             skip_scraping=args.rss_only,
             skip_telegram=args.no_telegram,
+            tier=args.tier,
         ))
