@@ -218,16 +218,16 @@ async def run_pipeline(skip_scraping: bool = False):
             print("   ⚠️ R2 not configured, skipping storage")
 
         # Step 5: Send to Telegram
-        print("\n📱 Step 5: Sending Telegram digest...")
+        print("\n[TELEGRAM] Step 5: Sending Telegram digest...")
 
         try:
             bot = TelegramBot()
-            results = await bot.send_digest(summarized_articles, source_name="ArchDaily")
-            print(f"   ✅ Sent {results['sent']} messages")
+            results = await bot.send_digest(summarized_articles)
+            print(f"   [OK] Sent {results['sent']} messages")
             if results['failed'] > 0:
-                print(f"   ⚠️ Failed: {results['failed']} messages")
+                print(f"   [WARN] Failed: {results['failed']} messages")
         except Exception as e:
-            print(f"   ❌ Telegram error: {e}")
+            print(f"   [ERROR] Telegram error: {e}")
 
         # Done
         print(f"\n{'=' * 60}")
