@@ -31,11 +31,8 @@ from langchain_openai import ChatOpenAI
 from prompts.summarize import SUMMARIZE_PROMPT_TEMPLATE
 from prompts.summarize import parse_summary_response
 from config.sources import (
-    SOURCES,
     get_source_config,
-    get_source_rss,
     get_sources_by_tier,
-    get_tested_sources,
     get_all_rss_sources,
 )
 
