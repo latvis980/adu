@@ -329,7 +329,7 @@ def save_to_r2(articles: list[dict], r2: R2Storage) -> dict[str, str]:
             storage_path = r2.save_articles(storage_articles, source=source_id)
             paths[source_id] = storage_path
 
-            saved_heroes = sum(1 for a in storage_articles if a.get("hero_image", {}).get("r2_path"))
+            saved_heroes = sum(1 for a in storage_articles if (a.get("hero_image") or {}).get("r2_path"))
             print(f"   ✅ {source_id}: {len(storage_articles)} articles saved")
             if saved_heroes > 0:
                 print(f"      {saved_heroes} hero images saved")
@@ -569,7 +569,7 @@ async def run_pipeline(
             print(f"   🚫 Articles filtered out: {len(excluded_articles)}")
         for sid, count in sorted(by_source.items()):
             print(f"      - {sid}: {count}")
-        hero_saved = sum(1 for a in articles if a.get("hero_image", {}).get("r2_path"))
+        hero_saved = sum(1 for a in articles if (a.get("hero_image") or {}).get("r2_path"))
         if hero_saved > 0:
             print(f"   🖼️ Hero images saved: {hero_saved}")
         print(f"{'=' * 60}")
