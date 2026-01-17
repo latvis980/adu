@@ -1,13 +1,13 @@
 # operators/custom_scrapers/archiposition.py
 """
-Archiposition Custom Scraper - Visual AI Approach with Cloudscraper
+Archiposition Custom Scraper - Visual AI Approach with User-Agent
 Scrapes architecture news from Archiposition (Chinese architecture magazine)
 
 Site: https://www.archiposition.com/category/1675
-Challenge: Returns 403 without proper user-agent and anti-bot handling
+Challenge: Returns 403 without proper user-agent headers
 
 Visual Scraping Strategy:
-1. Use cloudscraper to bypass 403 protection
+1. Use browser User-Agent headers to bypass 403 protection
 2. Take screenshot of architecture category page
 3. Use GPT-4o vision to extract article headlines
 4. On first run: Store all headlines in database as "seen"
@@ -38,7 +38,7 @@ from prompts.homepage_analyzer import HOMEPAGE_ANALYZER_PROMPT_TEMPLATE, parse_h
 class ArchipositionScraper(BaseCustomScraper):
     """
     Visual AI-powered custom scraper for Archiposition
-    Uses GPT-4o vision to identify articles + cloudscraper for 403 bypass.
+    Uses GPT-4o vision to identify articles + User-Agent for 403 bypass.
     """
 
     source_id = "archiposition"
@@ -133,16 +133,16 @@ class ArchipositionScraper(BaseCustomScraper):
     async def _find_headline_in_html_with_ai(self, page, headline: str) -> Optional[dict]:
         """
         Use AI to find the article link for a headline by analyzing HTML context.
-        
+
         Args:
             page: Playwright page object
             headline: Headline text to search for
-            
+
         Returns:
             Dict with title, link, description, image or None
         """
         self._ensure_vision_model()
-        
+
         # Extract relevant HTML context around potential article links
         html_context = await page.evaluate("""
             (headline) => {
@@ -150,19 +150,19 @@ class ArchipositionScraper(BaseCustomScraper):
                 const containers = document.querySelectorAll(
                     'article, .post, [class*="post"], [class*="item"], [class*="card"], .entry'
                 );
-                
+
                 const articleData = [];
-                
+
                 containers.forEach((container, index) => {
                     // Get all links in this container
                     const links = container.querySelectorAll('a[href]');
-                    
+
                     if (links.length === 0) return;
-                    
+
                     // Get the main link (usually the first or largest)
                     let mainLink = null;
                     let mainLinkText = '';
-                    
+
                     links.forEach(link => {
                         const text = link.textContent.trim();
                         if (text.length > mainLinkText.length) {
@@ -170,21 +170,21 @@ class ArchipositionScraper(BaseCustomScraper):
                             mainLinkText = text;
                         }
                     });
-                    
+
                     if (!mainLink) return;
-                    
+
                     // Extract data
                     const href = mainLink.href;
                     const linkText = mainLinkText;
-                    
+
                     // Get description
                     const descEl = container.querySelector('p, .excerpt, [class*="excerpt"], [class*="desc"]');
                     const description = descEl ? descEl.textContent.trim().substring(0, 150) : '';
-                    
+
                     // Get image
                     const imgEl = container.querySelector('img');
                     const imageUrl = imgEl ? imgEl.src : null;
-                    
+
                     // Only include if has meaningful text
                     if (linkText.length > 5 && href.includes('/')) {
                         articleData.push({
@@ -196,7 +196,7 @@ class ArchipositionScraper(BaseCustomScraper):
                         });
                     }
                 });
-                
+
                 return articleData;
             }
         """, headline)
@@ -207,7 +207,7 @@ class ArchipositionScraper(BaseCustomScraper):
         # Prepare context for AI analysis
         context_text = f"Looking for headline: '{headline}'\n\n"
         context_text += "Article containers found on page:\n"
-        
+
         for item in html_context[:15]:  # Limit to prevent token overflow
             context_text += f"\n--- Container {item['index']} ---\n"
             context_text += f"Link text: {item['link_text']}\n"
@@ -222,6 +222,7 @@ Which of these article containers is the best match? Consider:
 1. Semantic similarity (meaning, not just exact words)
 2. Context clues (description, URL patterns)
 3. Partial matches are OK if context is clear
+4. IMPORTANT: On archiposition.com, article URLs contain "/items/" - ignore category/tag URLs like "/category/"
 
 {context_text}
 
@@ -239,7 +240,7 @@ Do not include any explanation."""
         response_text = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
         if not isinstance(response_text, str):
             response_text = str(response_text)
-        
+
         response_clean = response_text.strip().upper()
 
         if response_clean == "NONE":
@@ -276,19 +277,30 @@ Do not include any explanation."""
             List of article dicts
         """
         await self._ensure_tracker()
-        
+
         try:
-            # Create page with cloudscraper headers
+            # Create page with browser User-Agent
             page = await self._create_page()
 
-            # Set additional headers to bypass 403
+            # Set additional browser-like headers to bypass 403
             await page.set_extra_http_headers({
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"macOS"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
             })
 
             try:
-                print(f"[{self.source_id}] Loading category page (with anti-bot bypass)...")
+                print(f"[{self.source_id}] Loading category page (with User-Agent headers)...")
                 await page.goto(self.base_url, timeout=self.timeout, wait_until="networkidle")
                 await page.wait_for_timeout(2000)
 
@@ -346,6 +358,12 @@ Do not include any explanation."""
 
                         url = homepage_data['link']
                         print(f"      🔗 Found link: {url}")
+
+                        # Validate URL - must be article page, not category
+                        if '/items/' not in url:
+                            print(f"      ⚠️  Skipping non-article URL (category/tag page)")
+                            skipped_no_link += 1
+                            continue
 
                         # Navigate to article page
                         await page.goto(url, timeout=self.timeout)
