@@ -10,7 +10,6 @@ Architecture:
 
 Usage:
     from operators.custom_scrapers.landezine import LandezineScraper
-
     scraper = LandezineScraper()
     articles = await scraper.fetch_articles(hours=24)
 """

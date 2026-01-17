@@ -21,7 +21,6 @@ from operators.custom_scraper_base import (
 )
 
 # Import all custom scrapers to auto-register them
-from operators.custom_scrapers.landezine import LandezineScraper
 from operators.custom_scrapers.identity import IdentityScraper
 from operators.custom_scrapers.archiposition import ArchipositionScraper
 from operators.custom_scrapers.prorus import ProRusScraper
