@@ -398,12 +398,13 @@ async def run_pipeline(
     if custom_only:
         valid_sources = custom_only
         print(f"ℹ️  Running only custom scrapers: {', '.join(custom_only)}")
+
+        # 🔍 DEBUG: Print what we're actually going to run
+        print(f"🔍 DEBUG: valid_sources = {valid_sources}")
+        for s in valid_sources:
+            print(f"   - {s}: is_custom={is_custom_scraper(s)}")
     else:
         print("⚠️ No custom scrapers found in selected sources")
-
-    if not valid_sources:
-        print("❌ No valid sources to process")
-        return
 
     print(f"\n{'=' * 60}")
     print("🏛️ ArchNews Monitor (Multi-Source)")

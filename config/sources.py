@@ -179,6 +179,7 @@ SOURCES = {
         "region": "europe",
         "category": "landscape",
         "scrape_timeout": 30000,
+        "custom_scraper": True,
     },
 
     # =========================================================================
