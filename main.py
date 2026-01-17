@@ -393,7 +393,7 @@ async def run_pipeline(
     #        print(f"⚠️ Skipping {sid}: no RSS URL configured")
 
     # TEMP: Force for custom scraper test
-    valid_sources = ["identity"]
+    valid_sources = ["archiposition", "prorus", "bauwelt", "gooood"]
     print("⚠️ TEMP: Testing custom scrapers - forcing identity")
 
 
