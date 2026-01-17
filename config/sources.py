@@ -260,6 +260,13 @@ SOURCES = {
         "category": "computational",
         "scrape_timeout": 20000,
     },
+    "identity": {
+        "id": "identity",
+        "name": "Identity Magazine",
+        "tier": 2,
+        "region": "middle_east",
+        "custom_scraper": True,  # Uses visual scraper
+    }
 }
 
 

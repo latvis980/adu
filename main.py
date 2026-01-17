@@ -59,8 +59,9 @@ from config.sources import (
     get_all_source_ids,
 )
 
-# TEMP: Testing custom scraper
+# TEMP: Testing custom scrapers
 from operators.custom_scrapers.landezine import LandezineScraper
+from operators.custom_scrapers.identity import IdentityScraper
 
 # Default configuration
 DEFAULT_HOURS_LOOKBACK = 24
@@ -385,8 +386,9 @@ async def run_pipeline(
     #        print(f"⚠️ Skipping {sid}: no RSS URL configured")
 
     # TEMP: Force landezine for custom scraper test
-    valid_sources = ["landezine"]
-    print("⚠️ TEMP: Testing custom scraper - forcing landezine only")
+    valid_sources = ["landezine", "identity"]
+    print("⚠️ TEMP: Testing custom scrapers - forcing landezine + identity")
+
 
     if not valid_sources:
         print("❌ No valid sources to process")
@@ -425,36 +427,49 @@ async def run_pipeline(
         # )
 
         # =================================================================
-        # Step 1: Fetch Articles (TEMP: Custom Scraper)
+        # Step 1: Fetch Articles (TEMP: Custom Scrapers)
         # =================================================================
-        print("\n📡 Step 1: TEMP - Testing Landezine custom scraper...")
+        print("\n📡 Step 1: TEMP - Testing custom scrapers...")
 
-        scraper_test = LandezineScraper()
+        all_articles = []
+
+        # Landezine scraper
+        print("\n[1/2] Landezine...")
+        landezine_scraper = LandezineScraper()
         try:
-            articles = await scraper_test.fetch_articles(hours=hours)
+            landezine_articles = await landezine_scraper.fetch_articles(hours=hours)
+            # Ensure correct format
+            for article in landezine_articles:
+                if "source_id" not in article:
+                    article["source_id"] = "landezine"
+                if "source_name" not in article:
+                    article["source_name"] = "Landezine"
+            all_articles.extend(landezine_articles)
+            print(f"   ✅ Landezine: {len(landezine_articles)} articles")
+        except Exception as e:
+            print(f"   ❌ Landezine failed: {e}")
         finally:
-            await scraper_test.close()
+            await landezine_scraper.close()
 
-        # Ensure correct format
-        for article in articles:
-            if "source_id" not in article:
-                article["source_id"] = "landezine"
-            if "source_name" not in article:
-                article["source_name"] = "Landezine"
+        # Identity scraper
+        print("\n[2/2] Identity Magazine...")
+        identity_scraper = IdentityScraper()
+        try:
+            identity_articles = await identity_scraper.fetch_articles(hours=hours)
+            # Ensure correct format
+            for article in identity_articles:
+                if "source_id" not in article:
+                    article["source_id"] = "identity"
+                if "source_name" not in article:
+                    article["source_name"] = "Identity Magazine"
+            all_articles.extend(identity_articles)
+            print(f"   ✅ Identity: {len(identity_articles)} articles")
+        except Exception as e:
+            print(f"   ❌ Identity failed: {e}")
+        finally:
+            await identity_scraper.close()
 
-        if not articles:
-            print("📭 No new articles found. Exiting.")
-            return
-
-        print(f"   ✅ Found {len(articles)} articles total")
-
-        # Show breakdown by source
-        by_source = {}
-        for article in articles:
-            sid = article.get("source_id", "unknown")
-            by_source[sid] = by_source.get(sid, 0) + 1
-        for sid, count in sorted(by_source.items()):
-            print(f"      - {sid}: {count}")
+        articles = all_articles
 
         # =================================================================
         # Step 2: Scrape Full Content (optional)
