@@ -148,6 +148,13 @@ SOURCES = {
         "category": "urbanism",
         "scrape_timeout": 20000,
     },
+    "metropolis": {
+        "name": "Metropolis",
+        "domains": ["metropolismag.com", "www.metropolismag.com"],
+        "tier": 2,
+        "region": "north_america",
+        "custom_scraper": True,
+    },
 
 
     # =========================================================================
@@ -172,16 +179,21 @@ SOURCES = {
         "category": "russia",
         "scrape_timeout": 20000,
     },
-    "landezine": {
-        "name": "Landezine",
-        "domains": ["landezine.com", "www.landezine.com"],
+    "domus": {
+        "name": "Domus",
+        "domains": ["domusweb.it", "www.domusweb.it"],
         "tier": 2,
         "region": "europe",
-        "category": "landscape",
-        "scrape_timeout": 30000,
         "custom_scraper": True,
     },
-
+    "metalocus": {
+        "name": "Metalocus",
+        "domains": ["metalocus.es", "www.metalocus.es"],
+        "tier": 2,
+        "region": "europe",
+        "custom_scraper": True,
+    },
+    
     # =========================================================================
     # TIER 2 - Asia-Pacific
     # =========================================================================
@@ -225,6 +237,25 @@ SOURCES = {
         "tier": 2,
         "region": "asia_pacific",
         "scrape_timeout": 20000,
+    },
+    "japan_architects": {
+        "name": "Japan Architects",
+        "domains": ["japan-architects.com", "www.japan-architects.com"],
+        "tier": 2,
+        "region": "asia_pacific",
+        "custom_scraper": True,
+    },
+
+    # =========================================================================
+    # TIER 2 - Africa
+    # =========================================================================
+
+    "archidatum": {
+        "name": "Archidatum",
+        "domains": ["archidatum.com", "www.archidatum.com"],
+        "tier": 2,
+        "region": "africa",
+        "custom_scraper": True,
     },
 
     # =========================================================================

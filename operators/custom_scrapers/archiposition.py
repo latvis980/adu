@@ -46,7 +46,7 @@ class ArchipositionScraper(BaseCustomScraper):
     base_url = "https://www.archiposition.com/category/1675"
 
     # Configuration: Maximum age of articles to process (in days)
-    MAX_ARTICLE_AGE_DAYS = 2  # Today + yesterday
+    MAX_ARTICLE_AGE_DAYS = 14  # Today + yesterday
 
     def __init__(self):
         """Initialize scraper with article tracker and vision model."""

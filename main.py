@@ -63,12 +63,16 @@ from config.sources import (
 )
 
 # Import custom scrapers
-from operators.custom_scrapers.landezine import LandezineScraper
 from operators.custom_scrapers.identity import IdentityScraper
 from operators.custom_scrapers.archiposition import ArchipositionScraper
 from operators.custom_scrapers.prorus import ProRusScraper
 from operators.custom_scrapers.bauwelt import BauweltScraper
 from operators.custom_scrapers.gooood import GoooodScraper
+from operators.custom_scrapers.japan_architects import JapanArchitectsScraper
+from operators.custom_scrapers.domus import DomusScraper
+from operators.custom_scrapers.archidatum import ArchidatumScraper
+from operators.custom_scrapers.metalocus import MetalocusScraper
+from operators.custom_scrapers.metropolis import MetropolisScraper
 
 # Default configuration
 DEFAULT_HOURS_LOOKBACK = 24
@@ -445,12 +449,16 @@ async def run_pipeline(
 
         # Map of custom scraper instances
         CUSTOM_SCRAPER_MAP = {
-            "landezine": LandezineScraper,
             "identity": IdentityScraper,
             "archiposition": ArchipositionScraper,
             "prorus": ProRusScraper,
             "bauwelt": BauweltScraper,
             "gooood": GoooodScraper,
+            "japan_architects": JapanArchitectsScraper,
+            "domus": DomusScraper,
+            "archidatum": ArchidatumScraper,
+            "metalocus": MetalocusScraper,
+            "metropolis": MetropolisScraper,
         }
 
         # Separate RSS sources from custom scrapers

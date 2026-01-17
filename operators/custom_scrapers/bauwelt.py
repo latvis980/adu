@@ -45,7 +45,7 @@ class BauweltScraper(BaseCustomScraper):
     base_url = "https://www.bauwelt.de/rubriken/bauten/standard_index_2073531.html"
 
     # Configuration: Maximum age of articles to process (in days)
-    MAX_ARTICLE_AGE_DAYS = 2  # Today + yesterday
+    MAX_ARTICLE_AGE_DAYS = 14  # Today + yesterday
 
     def __init__(self):
         """Initialize scraper with article tracker and vision model."""

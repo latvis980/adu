@@ -5,11 +5,11 @@ Contains custom scrapers for sites without working RSS feeds.
 
 Usage:
     from operators.custom_scrapers import get_custom_scraper, fetch_custom_source
-    
+
     # Get a specific scraper
     scraper = get_custom_scraper("landezine")
     articles = await scraper.fetch_articles(hours=24)
-    
+
     # Or use convenience function
     articles = await fetch_custom_source("landezine", hours=24)
 """
@@ -22,18 +22,28 @@ from operators.custom_scraper_base import (
 
 # Import all custom scrapers to auto-register them
 from operators.custom_scrapers.landezine import LandezineScraper
+from operators.custom_scrapers.identity import IdentityScraper
+from operators.custom_scrapers.archiposition import ArchipositionScraper
+from operators.custom_scrapers.prorus import ProRusScraper
+from operators.custom_scrapers.bauwelt import BauweltScraper
+from operators.custom_scrapers.gooood import GoooodScraper
+from operators.custom_scrapers.japan_architects import JapanArchitectsScraper
+from operators.custom_scrapers.domus import DomusScraper
+from operators.custom_scrapers.archidatum import ArchidatumScraper
+from operators.custom_scrapers.metalocus import MetalocusScraper
+from operators.custom_scrapers.metropolis import MetropolisScraper
 
 # Convenience functions
 def get_custom_scraper(source_id: str) -> BaseCustomScraper:
     """
     Get a custom scraper instance by source_id.
-    
+
     Args:
         source_id: Source identifier (e.g., 'landezine')
-        
+
     Returns:
         Scraper instance
-        
+
     Raises:
         ValueError: If scraper not found
     """
@@ -56,11 +66,11 @@ def list_custom_scrapers() -> list[str]:
 async def fetch_custom_source(source_id: str, hours: int = 24) -> list[dict]:
     """
     Convenience function to fetch articles from a custom scraper.
-    
+
     Args:
         source_id: Source identifier
         hours: Hours to look back
-        
+
     Returns:
         List of article dicts
     """
@@ -78,6 +88,16 @@ __all__ = [
     'CustomScraperRegistry',
     'custom_scraper_registry',
     'LandezineScraper',
+    'IdentityScraper',
+    'ArchipositionScraper',
+    'ProRusScraper',
+    'BauweltScraper',
+    'GoooodScraper',
+    'JapanArchitectsScraper',
+    'DomusScraper',
+    'ArchidatumScraper',
+    'MetalocusScraper',
+    'MetropolisScraper',
     'get_custom_scraper',
     'has_custom_scraper',
     'list_custom_scrapers',
