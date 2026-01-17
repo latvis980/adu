@@ -219,7 +219,7 @@ class ProRusScraper(BaseCustomScraper):
 
 Which of these article containers is the best match? Consider:
 1. Semantic similarity (meaning, not just exact words)
-2. Context clues (description, URL patterns). On prorus.ru, project URLs typically are transliterated headline, words separated by hyphens, e.g. ehkspozicionno-obrazovatelnyj-centr-planeta-okean-v-kaliningrade/
+2. Context clues (description, URL patterns). On prorus.ru, project URLs typically are transliterated headline, words separated by hyphens, e.g. ehkspozicionno-obrazovatelnyj-centr-planeta-okean-v-kaliningrade/. URLS with Slavis letters are links to tag pages, not individual artices.
 3. Partial matches are OK if context is clear
 
 {context_text}

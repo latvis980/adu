@@ -19,7 +19,7 @@ Guidelines:
 - Ignore navigation menus, footer links, sidebar content, ads
 - Ignore section labels — they can sometimes appear above the actual headline. The clue is that they are usually smaller and often appear on the page several times. 
 - Focus on the main content area where articles are listed
-- Each headline should be distinct (not repeated navigation items)
+- Each headline should be distinct (not repeated navigation items. E.g. in Prorus abouve every headline there is a tag, like общественные пространства, временная архитектура и экспозиционный дизайн — these are not headlines, the headlines are in larger font below)
 - Return ONLY the headlines, one per line
 - Do not change wording, copy the headline EXACLTY as it appears
 - Return headlines in the order they appear (top to bottom, left to right)
