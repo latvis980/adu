@@ -23,6 +23,10 @@ from typing import Optional, Any
 from urllib.parse import urljoin, urlparse
 from html import unescape
 
+from storage.scraping_stats import ScrapingStats
+from storage.r2 import R2Storage
+import os as os_module
+
 from playwright.async_api import (
     async_playwright,
     Browser,
@@ -58,6 +62,8 @@ class BaseCustomScraper(ABC):
         self.browser: Optional[Browser] = None
         self.playwright = None
         self.timeout = 20000  # 20 seconds
+        self.stats: Optional[ScrapingStats] = None
+
 
         # User-Agent to avoid blocks
         self.user_agent = (
@@ -449,6 +455,36 @@ class BaseCustomScraper(ABC):
         except Exception as e:
             print(f"[{self.source_id}] Connection test failed: {e}")
             return False
+
+    def _init_stats(self):
+        """Initialize statistics tracking for this run."""
+        self.stats = ScrapingStats(
+            source_id=self.source_id,
+            source_name=self.source_name,
+            base_url=self.base_url
+        )
+
+    async def _upload_stats_to_r2(self):
+        """Upload statistics report to R2."""
+        if not self.stats:
+            return
+
+        try:
+            # Initialize R2 client
+            r2 = R2Storage()
+
+            # Convert stats to JSON
+            stats_json = self.stats.to_json()
+
+            # Upload to R2
+            path = r2.save_scraping_stats(self.source_id, stats_json)
+
+            print(f"[{self.source_id}] ✅ Statistics uploaded to R2: {path}")
+
+        except Exception as e:
+            print(f"[{self.source_id}] ⚠️ Failed to upload statistics: {e}")
+            if self.stats:
+                self.stats.log_error(f"Stats upload failed: {str(e)}")
 
 
 # =============================================================================

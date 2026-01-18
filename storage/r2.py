@@ -440,3 +440,47 @@ class R2Storage:
         except ClientError as e:
             print(f"   ❌ R2 connection failed: {e}")
             return False
+
+    # =========================================================================
+    # Scraping Statistics Storage
+    # =========================================================================
+
+    def save_scraping_stats(
+        self,
+        source_id: str,
+        stats_json: str,
+        target_date: Optional[date] = None
+    ) -> str:
+        """
+        Save scraping statistics report to R2 storage.
+
+        Args:
+            source_id: Source identifier
+            stats_json: JSON string of statistics
+            target_date: Target date for the report (defaults to today)
+
+        Returns:
+            Storage path where stats were saved
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        # Build path: scraping/YYYY-MM-DD/source_id_stats.json
+        date_str = target_date.strftime("%Y-%m-%d")
+        timestamp = datetime.now().strftime("%H-%M-%S")
+        path = f"scraping/{date_str}/{source_id}_stats_{timestamp}.json"
+
+        try:
+            self.client.put_object(
+                Bucket=self.bucket_name,
+                Key=path,
+                Body=stats_json,
+                ContentType="application/json"
+            )
+
+            print(f"   📊 Stats saved to: {path}")
+            return path
+
+        except ClientError as e:
+            print(f"   ❌ Failed to save stats: {e}")
+            raise
