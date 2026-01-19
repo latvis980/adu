@@ -1,21 +1,20 @@
 # operators/custom_scrapers/japan_architects.py
 """
-Japan Architects Custom Scraper - HTML Pattern Approach (Simplified)
+Japan Architects Custom Scraper - HTML Pattern Approach
 Scrapes architecture news from Japan-Architects.com
 
 Site: https://www.japan-architects.com/ja
-Strategy: Extract links matching /ja/architecture-news/ pattern + dates from HTML
+Strategy: Extract links matching /ja/architecture-news/ pattern + AI date extraction
 
 Pattern Analysis:
 - Article links: /ja/architecture-news/category/article-name
-- Date format in HTML: DD.MM.YYYY (e.g., "28.12.2025")
-- Each article block contains: image, category tag, title, description, author + date
+- Date format in HTML: DD.MM.YYYY (e.g., "28.12.2025") in span with author
 
 HTML Structure:
 <div class="grid-item ... news-panel">
-    ...
-    <a href="/ja/architecture-news/...">...</a>
-    ...
+    <div class="title ...">
+        <a href="/ja/architecture-news/...">Article Title</a>
+    </div>
     <span> Author Name | DD.MM.YYYY </span>
 </div>
 
@@ -30,11 +29,15 @@ Usage:
 
 import asyncio
 import re
+import os
 from typing import Optional, List, Tuple
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+from pydantic import SecretStr
 
 from operators.custom_scraper_base import BaseCustomScraper, custom_scraper_registry
 from storage.article_tracker import ArticleTracker
@@ -43,7 +46,7 @@ from storage.article_tracker import ArticleTracker
 class JapanArchitectsScraper(BaseCustomScraper):
     """
     HTML pattern-based custom scraper for Japan Architects.
-    Extracts article links and dates directly from HTML - no AI needed.
+    Extracts article links from HTML, uses AI for date extraction.
     """
 
     source_id = "japan_architects"
@@ -51,19 +54,17 @@ class JapanArchitectsScraper(BaseCustomScraper):
     base_url = "https://www.japan-architects.com/ja"
 
     # Configuration
-    MAX_ARTICLE_AGE_DAYS = 30
+    MAX_ARTICLE_AGE_DAYS = 14
     MAX_NEW_ARTICLES = 15
 
     # URL pattern for architecture news
     ARTICLE_PATTERN = re.compile(r'/ja/architecture-news/[^"\'>\s]+')
 
-    # Date pattern: DD.MM.YYYY
-    DATE_PATTERN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{4})')
-
     def __init__(self):
         """Initialize scraper with article tracker."""
         super().__init__()
         self.tracker: Optional[ArticleTracker] = None
+        self.llm: Optional[ChatOpenAI] = None
 
     async def _ensure_tracker(self):
         """Ensure article tracker is connected."""
@@ -71,23 +72,32 @@ class JapanArchitectsScraper(BaseCustomScraper):
             self.tracker = ArticleTracker()
             await self.tracker.connect()
 
-    def _extract_articles_from_html(self, html: str) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Extract article URLs, titles and dates from HTML.
+    def _ensure_llm(self):
+        """Ensure LLM is initialized for date extraction."""
+        if not self.llm:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY not set")
 
-        Parses the news-panel blocks to get:
-        - URL from href="/ja/architecture-news/..."
-        - Title from the link text
-        - Date from the span containing "| DD.MM.YYYY"
+            self.llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                api_key=SecretStr(api_key),
+                temperature=0.1
+            )
+            print(f"[{self.source_id}] LLM initialized for date extraction")
+
+    def _extract_articles_from_html(self, html: str) -> List[Tuple[str, str, str]]:
+        """
+        Extract article URLs, titles, and surrounding HTML blocks for date extraction.
 
         Args:
             html: Page HTML content
 
         Returns:
-            List of tuples: (url, title, date_iso) - date may be None
+            List of tuples: (url, title, html_block)
         """
         soup = BeautifulSoup(html, 'html.parser')
-        articles: List[Tuple[str, str, Optional[str]]] = []
+        articles: List[Tuple[str, str, str]] = []
         seen_urls: set[str] = set()
 
         # Find all news panel blocks
@@ -119,7 +129,6 @@ class JapanArchitectsScraper(BaseCustomScraper):
                         href = link.get('href', '')
                         if self.ARTICLE_PATTERN.match(href):
                             article_link = href
-                            # Get title from link text if it's not just an image
                             link_text = link.get_text(strip=True)
                             if link_text and not title:
                                 title = link_text
@@ -136,31 +145,15 @@ class JapanArchitectsScraper(BaseCustomScraper):
                     continue
                 seen_urls.add(full_url)
 
-                # Extract date from the span (format: "Author | DD.MM.YYYY")
-                date_iso = None
-                panel_text = panel.get_text()
-                date_match = self.DATE_PATTERN.search(panel_text)
-
-                if date_match:
-                    day, month, year = date_match.groups()
-                    try:
-                        date_obj = datetime(
-                            year=int(year),
-                            month=int(month),
-                            day=int(day),
-                            tzinfo=timezone.utc
-                        )
-                        date_iso = date_obj.isoformat()
-                    except ValueError as e:
-                        print(f"[{self.source_id}] Invalid date: {day}.{month}.{year} - {e}")
-
                 # Use URL slug as title if no title found
                 if not title:
-                    # Extract from URL: /ja/architecture-news/category/article-name -> article-name
                     slug = article_link.rstrip('/').split('/')[-1]
                     title = slug.replace('-', ' ').title()
 
-                articles.append((full_url, title, date_iso))
+                # Get the HTML block for date extraction
+                html_block = str(panel)
+
+                articles.append((full_url, title, html_block))
 
             except Exception as e:
                 print(f"[{self.source_id}] Error parsing panel: {e}")
@@ -168,11 +161,74 @@ class JapanArchitectsScraper(BaseCustomScraper):
 
         return articles
 
+    def _extract_date_with_ai(self, html_block: str, title: str) -> Optional[str]:
+        """
+        Use AI to extract date from HTML block.
+
+        The date is typically in format: "Author Name | DD.MM.YYYY"
+
+        Args:
+            html_block: HTML content of the article block
+            title: Article title for context
+
+        Returns:
+            ISO format date string or None
+        """
+        self._ensure_llm()
+
+        if not self.llm:
+            return None
+
+        # Clean up HTML for AI
+        soup = BeautifulSoup(html_block, 'html.parser')
+        text_content = soup.get_text(separator=' ', strip=True)
+
+        prompt = f"""Extract the publication date from this article block.
+
+Article title: {title}
+
+HTML block text:
+{text_content[:1000]}
+
+The date format is typically DD.MM.YYYY (European format), appearing after the author name with a "|" separator.
+For example: "Akio Nakasa | 28.12.2025"
+
+Today's date is: {datetime.now().strftime("%d.%m.%Y")}
+
+Respond with ONLY the date in ISO format (YYYY-MM-DD) or NONE if no date found.
+Do not use emoji."""
+
+        try:
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            response_text = str(response.content).strip()
+
+            if response_text.upper() == "NONE" or "NONE" in response_text.upper():
+                return None
+
+            # Extract ISO format date
+            iso_pattern = r'(\d{4}-\d{2}-\d{2})'
+            match = re.search(iso_pattern, response_text)
+
+            if match:
+                date_str = match.group(1)
+                # Validate it's a real date
+                try:
+                    dt = datetime.strptime(date_str, '%Y-%m-%d')
+                    dt = dt.replace(tzinfo=timezone.utc)
+                    return dt.isoformat()
+                except ValueError:
+                    return None
+
+            return None
+
+        except Exception as e:
+            print(f"[{self.source_id}] AI date extraction error: {e}")
+            return None
+
     def _is_within_age_limit(self, date_iso: Optional[str]) -> bool:
         """Check if article date is within MAX_ARTICLE_AGE_DAYS."""
         if not date_iso:
-            # If no date, assume it's recent enough
-            return True
+            return True  # Include if no date
 
         try:
             article_date = datetime.fromisoformat(date_iso.replace('Z', '+00:00'))
@@ -187,10 +243,11 @@ class JapanArchitectsScraper(BaseCustomScraper):
 
         Workflow:
         1. Load homepage with User-Agent header
-        2. Extract all /ja/architecture-news/ links + dates from HTML
+        2. Extract all /ja/architecture-news/ links + HTML blocks
         3. Check database for new URLs
-        4. Filter by date (within MAX_ARTICLE_AGE_DAYS)
-        5. Return minimal article dicts for main pipeline
+        4. For new articles: use AI to extract date from HTML block
+        5. Filter by date (within MAX_ARTICLE_AGE_DAYS)
+        6. Return minimal article dicts for main pipeline
 
         Args:
             hours: Ignored (we use database tracking instead)
@@ -201,10 +258,11 @@ class JapanArchitectsScraper(BaseCustomScraper):
         # Initialize statistics tracking
         self._init_stats()
 
-        print(f"\n[{self.source_id}] 🔍 Starting HTML pattern scraping...")
+        print(f"\n[{self.source_id}] Starting HTML pattern scraping...")
         print(f"   URL: {self.base_url}")
 
         await self._ensure_tracker()
+        self._ensure_llm()
 
         try:
             page = await self._create_page()
@@ -234,7 +292,7 @@ class JapanArchitectsScraper(BaseCustomScraper):
                 print(f"[{self.source_id}] Found {len(extracted)} articles matching /ja/architecture-news/ pattern")
 
                 if not extracted:
-                    print(f"[{self.source_id}] ⚠️ No articles found")
+                    print(f"[{self.source_id}] No articles found")
                     if self.stats:
                         self.stats.log_final_count(0)
                         self.stats.print_summary()
@@ -252,8 +310,8 @@ class JapanArchitectsScraper(BaseCustomScraper):
 
                 # Find new articles
                 new_articles_data = [
-                    (url, title, date)
-                    for url, title, date in extracted
+                    (url, title, html_block)
+                    for url, title, html_block in extracted
                     if url not in seen_urls
                 ]
 
@@ -263,8 +321,7 @@ class JapanArchitectsScraper(BaseCustomScraper):
                 print(f"   New articles: {len(new_articles_data)}")
 
                 if not new_articles_data:
-                    print(f"[{self.source_id}] ✅ No new articles to process")
-                    # Still store all URLs
+                    print(f"[{self.source_id}] No new articles to process")
                     await self.tracker.store_headlines(self.source_id, all_urls)
                     if self.stats:
                         self.stats.log_final_count(0)
@@ -273,17 +330,33 @@ class JapanArchitectsScraper(BaseCustomScraper):
                     return []
 
                 # ============================================================
-                # Step 4: Filter by Date and Build Results
+                # Step 4: Extract Dates and Build Results
                 # ============================================================
+                print(f"\n[{self.source_id}] Extracting dates with AI...")
                 new_articles: list[dict] = []
                 skipped_old = 0
 
-                for url, title, date_iso in new_articles_data[:self.MAX_NEW_ARTICLES]:
+                for url, title, html_block in new_articles_data[:self.MAX_NEW_ARTICLES]:
+                    print(f"\n   Processing: {title[:50]}...")
+
+                    # Extract date using AI
+                    date_iso = self._extract_date_with_ai(html_block, title)
+
+                    if date_iso:
+                        print(f"      Date: {date_iso[:10]}")
+                        if self.stats:
+                            self.stats.log_date_fetched(title, url, date_iso[:10])
+                    else:
+                        print(f"      Date: Not found")
+                        if self.stats:
+                            self.stats.log_date_fetch_failed(title)
+
                     # Check date limit
                     if not self._is_within_age_limit(date_iso):
+                        print(f"      Skipped (too old)")
                         skipped_old += 1
                         if self.stats:
-                            self.stats.log_skipped("too_old")
+                            self.stats.log_filter_rejected(title, url, "Too old")
                         continue
 
                     # Build article dict
@@ -299,11 +372,9 @@ class JapanArchitectsScraper(BaseCustomScraper):
                     new_articles.append(article)
 
                     if self.stats:
-                        self.stats.log_article_found(url)
+                        self.stats.log_filter_passed(title, url, "Within date range")
 
-                    print(f"   ✅ {title[:50]}...")
-                    if date_iso:
-                        print(f"      Date: {date_iso[:10]}")
+                    print(f"      Added")
 
                 # ============================================================
                 # Step 5: Store All URLs and Finalize
@@ -311,11 +382,11 @@ class JapanArchitectsScraper(BaseCustomScraper):
                 await self.tracker.store_headlines(self.source_id, all_urls)
 
                 # Final Summary
-                print(f"\n[{self.source_id}] 📊 Processing Summary:")
+                print(f"\n[{self.source_id}] Processing Summary:")
                 print(f"   Articles found: {len(extracted)}")
                 print(f"   New articles: {len(new_articles_data)}")
                 print(f"   Skipped (too old): {skipped_old}")
-                print(f"   ✅ Successfully scraped: {len(new_articles)}")
+                print(f"   Successfully scraped: {len(new_articles)}")
 
                 # Log final count and upload stats
                 if self.stats:
@@ -329,7 +400,7 @@ class JapanArchitectsScraper(BaseCustomScraper):
                 await page.close()
 
         except Exception as e:
-            print(f"[{self.source_id}] ❌ Error in scraping: {e}")
+            print(f"[{self.source_id}] Error in scraping: {e}")
             if self.stats:
                 self.stats.log_error(f"Critical error: {str(e)}")
                 self.stats.print_summary()
@@ -369,7 +440,7 @@ async def test_japan_architects_scraper():
         connected = await scraper.test_connection()
 
         if not connected:
-            print("   ❌ Connection failed")
+            print("   Connection failed")
             return
 
         # Show tracker stats
