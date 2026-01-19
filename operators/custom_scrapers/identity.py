@@ -8,12 +8,9 @@ Visual Scraping Strategy:
 2. Use GPT-4o vision to extract article headlines
 3. On first run: Store all headlines in database as "seen"
 4. On subsequent runs: Only process NEW headlines (not in database)
-5. Find headline text in HTML coupled with link
-6. Click link to get publication date and metadata
-7. Continue with standard scraping logic
-
-This approach is resilient to HTML structure changes since we use
-visual analysis to identify articles rather than hardcoded selectors.
+5. Use AI to match headlines to links in HTML (semantic matching)
+6. Click link to get publication date using AI date extraction
+7. Main pipeline handles hero image and content extraction
 
 Usage:
     scraper = IdentityScraper()
@@ -21,10 +18,9 @@ Usage:
     await scraper.close()
 """
 
-import re
 import asyncio
 import base64
-from typing import Optional, List, Any, cast
+from typing import Optional, List, cast
 from datetime import datetime, timezone
 
 from langchain_openai import ChatOpenAI
@@ -32,6 +28,7 @@ from langchain_core.messages import HumanMessage
 
 from operators.custom_scraper_base import BaseCustomScraper, custom_scraper_registry
 from storage.article_tracker import ArticleTracker
+from storage.scraping_stats import ScrapingStats
 from prompts.homepage_analyzer import HOMEPAGE_ANALYZER_PROMPT_TEMPLATE, parse_headlines
 
 
@@ -46,7 +43,6 @@ class IdentityScraper(BaseCustomScraper):
     base_url = "https://identity.ae/category/architecture/"
 
     # Configuration: Maximum age of articles to process (in days)
-    # Articles older than this will be skipped even if new to the scraper
     MAX_ARTICLE_AGE_DAYS = 2  # Today + yesterday
 
     def __init__(self):
@@ -54,6 +50,7 @@ class IdentityScraper(BaseCustomScraper):
         super().__init__()
         self.tracker: Optional[ArticleTracker] = None
         self.vision_model: Optional[ChatOpenAI] = None
+        self.stats = ScrapingStats(source_id=self.source_id)
 
     async def _ensure_tracker(self):
         """Ensure article tracker is connected."""
@@ -69,13 +66,12 @@ class IdentityScraper(BaseCustomScraper):
             if not api_key:
                 raise ValueError("OPENAI_API_KEY not set")
 
-            # Cast to str for type checker (we know it's not None after the check above)
             api_key_str = cast(str, api_key)
 
             self.vision_model = ChatOpenAI(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 api_key=api_key_str,
-                temperature=0.1  # Low temperature for consistent extraction
+                temperature=0.1
             )
             print(f"[{self.source_id}] Vision model initialized")
 
@@ -91,45 +87,40 @@ class IdentityScraper(BaseCustomScraper):
         """
         self._ensure_vision_model()
 
-        print(f"[{self.source_id}] 📸 Analyzing screenshot with AI vision...")
+        if not self.vision_model:
+            raise RuntimeError("Vision model not initialized")
 
         # Read and encode screenshot
         with open(screenshot_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
 
         # Create vision message
+        prompt = HOMEPAGE_ANALYZER_PROMPT_TEMPLATE.format(
+            source_name=self.source_name
+        )
+
         message = HumanMessage(
             content=[
-                {
-                    "type": "text",
-                    "text": HOMEPAGE_ANALYZER_PROMPT_TEMPLATE.format()
-                },
+                {"type": "text", "text": prompt},
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{image_data}"
-                    }
+                    "image_url": {"url": f"data:image/png;base64,{image_data}"}
                 }
             ]
         )
 
         # Get response
-        if not self.vision_model:
-            raise RuntimeError("Vision model not initialized")
-
         response = await asyncio.to_thread(
             self.vision_model.invoke,
             [message]
         )
 
-        # Parse headlines - ensure response.content is a string
+        # Parse headlines
         response_text = response.content if hasattr(response, 'content') else str(response)
         if not isinstance(response_text, str):
             response_text = str(response_text)
 
         headlines = parse_headlines(response_text)
-
-        print(f"[{self.source_id}] ✅ Extracted {len(headlines)} headlines from screenshot")
         return headlines
 
     async def _find_headline_in_html_with_ai(self, page, headline: str) -> Optional[dict]:
@@ -137,9 +128,9 @@ class IdentityScraper(BaseCustomScraper):
         Find a headline in the page HTML using AI-powered matching.
 
         Strategy:
-        1. Extract ALL meaningful links from the page (minimal filtering)
-        2. Send them all to AI with context
-        3. Let AI figure out which one matches the headline
+        1. Extract ALL meaningful article containers from the page
+        2. Send them all to AI with the target headline
+        3. AI matches semantically and returns the best match
 
         Args:
             page: Playwright page object
@@ -150,31 +141,53 @@ class IdentityScraper(BaseCustomScraper):
         """
         self._ensure_vision_model()
 
-        # Extract all potentially relevant links - let AI do the filtering
+        # Extract relevant HTML context around potential article links
         html_context = await page.evaluate("""
-            () => {
-                const allLinks = document.querySelectorAll('a[href]');
-                const linkData = [];
-                const seenUrls = new Set(); // Avoid duplicates
+            (headline) => {
+                // Find all article-like containers
+                const containers = document.querySelectorAll(
+                    'article, .post, [class*="post"], [class*="item"], [class*="card"], .entry'
+                );
 
-                allLinks.forEach((link, index) => {
-                    const text = link.textContent.trim();
-                    const href = link.href;
+                const articleData = [];
 
-                    // Only basic filtering: has text, has valid URL, not duplicate
-                    if (text.length > 5 && href && href.startsWith('http') && !seenUrls.has(href)) {
-                        seenUrls.add(href);
+                containers.forEach((container, index) => {
+                    // Get all links in this container
+                    const links = container.querySelectorAll('a[href]');
 
-                        // Try to get nearby context (description, image)
-                        const container = link.closest('article, .post, [class*="post"], [class*="item"], div');
-                        const descEl = container ? container.querySelector('p, .excerpt, [class*="excerpt"]') : null;
-                        const description = descEl ? descEl.textContent.trim().substring(0, 150) : '';
+                    if (links.length === 0) return;
 
-                        const imgEl = container ? container.querySelector('img') : null;
-                        const imageUrl = imgEl ? imgEl.src : null;
+                    // Get the main link (usually the first or largest)
+                    let mainLink = null;
+                    let mainLinkText = '';
 
-                        linkData.push({
-                            link_text: text,
+                    links.forEach(link => {
+                        const text = link.textContent.trim();
+                        if (text.length > mainLinkText.length) {
+                            mainLink = link;
+                            mainLinkText = text;
+                        }
+                    });
+
+                    if (!mainLink) return;
+
+                    // Extract data
+                    const href = mainLink.href;
+                    const linkText = mainLinkText;
+
+                    // Get description
+                    const descEl = container.querySelector('p, .excerpt, [class*="excerpt"], [class*="desc"]');
+                    const description = descEl ? descEl.textContent.trim().substring(0, 150) : '';
+
+                    // Get image
+                    const imgEl = container.querySelector('img');
+                    const imageUrl = imgEl ? imgEl.src : null;
+
+                    // Only include if it has meaningful content
+                    if (linkText.length > 5) {
+                        articleData.push({
+                            index: index,
+                            link_text: linkText,
                             href: href,
                             description: description,
                             image_url: imageUrl
@@ -182,109 +195,78 @@ class IdentityScraper(BaseCustomScraper):
                     }
                 });
 
-                return linkData;
+                return articleData;
             }
-        """)
+        """, headline)
 
         if not html_context or len(html_context) == 0:
-            print(f"      ⚠️ No links found on page")
+            print(f"      ⚠️ No article containers found on page")
             return None
 
-        print(f"      🔍 Found {len(html_context)} links on page")
+        print(f"      🔍 Found {len(html_context)} article containers")
 
-        # Enhanced AI prompt that helps it distinguish article links
-        prompt = f"""You are analyzing links from a web page to find the one matching a specific article headline.
+        # Format for AI
+        context_text = "\n\n".join([
+            f"[{item['index']}] LINK_TEXT: {item['link_text']}\n"
+            f"    URL: {item['href']}\n"
+            f"    EXCERPT: {item['description']}"
+            for item in html_context
+        ])
 
-    TARGET HEADLINE: "{headline}"
+        # AI prompt for semantic matching
+        prompt = f"""You are analyzing article containers from identity.ae to find which one matches a target headline.
 
-    ALL LINKS ON PAGE:
-    {self._format_articles_for_ai(html_context)}
+TARGET HEADLINE: "{headline}"
 
-    Your task: Find which link is the article matching the target headline.
+AVAILABLE ARTICLE CONTAINERS:
+{context_text}
 
-    Context to help you:
-    - Article links usually have longer, descriptive text (not "Read more", "Share", "Home", etc.)
-    - Article links point to individual article URLs (not /category/, /tag/, /author/, homepage)
-    - The link_text might be slightly different from headline (capitalization, punctuation, shortened)
-    - Navigation and footer links will be mixed in - ignore those
+Your task: Find which container index best matches the target headline.
 
-    Respond with ONLY the index number (0, 1, 2, etc.) of the matching article link, or "NONE" if no match exists.
+Consider:
+1. Semantic similarity (meaning, not just exact words)
+2. Context clues (description, URL patterns)
+3. Partial matches are OK if context is clear
 
-    Example responses:
-    15
-    NONE
-    3"""
+Respond with ONLY the container index number (e.g., "3") or "NONE" if no good match.
+Do not include any explanation."""
 
-        try:
-            if not self.vision_model:
-                raise RuntimeError("Vision model not initialized")
+        if not self.vision_model:
+            raise RuntimeError("Vision model not initialized")
 
-            response = await asyncio.to_thread(
-                self.vision_model.invoke,
-                prompt
-            )
+        ai_response = await asyncio.to_thread(
+            self.vision_model.invoke,
+            [HumanMessage(content=prompt)]
+        )
 
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            response_text = response_text.strip()
+        response_text = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
+        if not isinstance(response_text, str):
+            response_text = str(response_text)
 
-            # Parse AI response
-            if response_text.upper() == "NONE":
-                print(f"      ❌ AI: No matching article found")
-                return None
+        response_clean = response_text.strip().upper()
 
-            try:
-                match_index = int(response_text)
+        if response_clean == "NONE":
+            return None
 
-                if match_index < 0 or match_index >= len(html_context):
-                    print(f"      ⚠️ AI returned invalid index: {match_index}")
-                    return None
+        # Extract index number
+        import re
+        match = re.search(r'\d+', response_clean)
+        if not match:
+            return None
 
-                # Get the matched article
-                matched = html_context[match_index]
+        selected_index = int(match.group(0))
 
-                print(f"      ✅ AI matched to: '{matched['link_text'][:50]}...'")
-
+        # Find the matching container
+        for item in html_context:
+            if item['index'] == selected_index:
                 return {
-                    "title": matched["link_text"],
-                    "link": matched["href"],
-                    "description": matched.get("description", ""),
-                    "image_url": matched.get("image_url")
+                    'title': item['link_text'],
+                    'link': item['href'],
+                    'description': item['description'],
+                    'image_url': item['image_url']
                 }
 
-            except ValueError:
-                print(f"      ⚠️ AI returned non-numeric response: {response_text}")
-                return None
-
-        except Exception as e:
-            print(f"      ❌ AI analysis error: {e}")
-            return None
-    
-    def _format_articles_for_ai(self, articles: List[dict]) -> str:
-        """Format article data for AI prompt."""
-        lines = []
-        for i, article in enumerate(articles):
-            lines.append(f"[{i}] LINK_TEXT: {article['link_text']}")
-            lines.append(f"    URL: {article['href']}")
-            if article.get('description'):
-                lines.append(f"    EXCERPT: {article['description'][:100]}")
-            lines.append("")
-        
-        return "\n".join(lines)
-    
-    async def _find_headline_in_html(self, page, headline: str) -> Optional[dict]:
-        """
-        Find a headline in the page HTML and extract its link.
-        
-        Uses AI-powered HTML analysis for reliable matching.
-        
-        Args:
-            page: Playwright page object
-            headline: Headline text to search for
-
-        Returns:
-            Dict with title, link, description, image or None
-        """
-        return await self._find_headline_in_html_with_ai(page, headline)
+        return None
 
     async def fetch_articles(self, hours: int = 24) -> List[dict]:
         """
@@ -292,26 +274,26 @@ class IdentityScraper(BaseCustomScraper):
 
         Args:
             hours: Not used for visual scraping (kept for base class compatibility)
-                   Visual scraping uses headline comparison instead of time-based filtering
 
         Workflow:
         1. Screenshot category page
         2. Extract headlines with GPT-4o vision
         3. Compare with stored headlines to find NEW ones (database filtering)
         4. For each new headline:
-           - Find it in HTML and get the link
-           - Click link to get publication date
-           - Filter by date: only keep articles from today/yesterday (max 2 days old)
-           - Create article dict
+           - Find it in HTML and get the link (AI matching)
+           - Click link to get publication date (AI extraction)
+           - Filter by date: only keep articles within MAX_ARTICLE_AGE_DAYS
+           - Create minimal article dict
         5. Store all current headlines in database (for next run)
+        6. Upload statistics to R2
 
         Date Filtering:
-        - Articles older than MAX_ARTICLE_AGE_DAYS are skipped (handles archive content)
+        - Articles older than MAX_ARTICLE_AGE_DAYS are skipped
         - Articles without dates are included (better to include than miss)
         - Uses article publication date, not homepage appearance date
 
         Returns:
-            List of article dicts (only new articles from today/yesterday)
+            List of article dicts (only new articles from recent days)
         """
         # Maximum new articles to process per run
         max_new = 10
@@ -342,10 +324,13 @@ class IdentityScraper(BaseCustomScraper):
                 # Step 2: Extract Headlines with AI Vision
                 # ============================================================
 
+                print(f"[{self.source_id}] 🤖 Analyzing screenshot with GPT-4o vision...")
                 current_headlines = await self._analyze_homepage_screenshot(screenshot_path)
+                print(f"[{self.source_id}] ✅ Extracted {len(current_headlines)} headlines from screenshot")
 
                 if not current_headlines:
                     print(f"[{self.source_id}] No headlines extracted from screenshot")
+                    await self._upload_stats_to_r2()
                     return []
 
                 # ============================================================
@@ -360,8 +345,14 @@ class IdentityScraper(BaseCustomScraper):
                     current_headlines
                 )
 
+                print(f"\n[{self.source_id}] 📊 Status:")
+                print(f"   Total headlines: {len(current_headlines)}")
+                print(f"   Already seen: {len(current_headlines) - len(new_headlines)}")
+                print(f"   NEW headlines: {len(new_headlines)}")
+
                 if not new_headlines:
                     print(f"[{self.source_id}] No new headlines (all previously seen)")
+                    await self._upload_stats_to_r2()
                     return []
 
                 # Limit to max_new
@@ -380,18 +371,19 @@ class IdentityScraper(BaseCustomScraper):
                 skipped_no_link = 0  # Track articles with no link found
 
                 for i, headline in enumerate(new_headlines, 1):
-                    print(f"   [{i}/{len(new_headlines)}] {headline[:50]}...")
+                    print(f"\n   [{i}/{len(new_headlines)}] {headline[:50]}...")
 
                     try:
-                        # Find headline in HTML
-                        homepage_data = await self._find_headline_in_html(page, headline)
+                        # Find headline in HTML using AI
+                        homepage_data = await self._find_headline_in_html_with_ai(page, headline)
 
-                        if not homepage_data:
+                        if not homepage_data or not homepage_data.get('link'):
                             print(f"      ⚠️ Could not find link for headline")
                             skipped_no_link += 1
                             continue
 
                         url = homepage_data['link']
+                        print(f"      🔗 Found URL: {url}")
 
                         # ============================================================
                         # Step 5: Click Into Article to Get Publication Date
@@ -400,48 +392,23 @@ class IdentityScraper(BaseCustomScraper):
                         await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout)
                         await page.wait_for_timeout(1500)
 
-                        # Extract publication date and metadata
-                        article_metadata = await page.evaluate(r"""
+                        # Extract article text for AI date extraction
+                        article_text = await page.evaluate("""
                             () => {
-                                // Look for publication date
-                                const datePatterns = [
-                                    /(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i,
-                                    /(\d{4})-(\d{2})-(\d{2})/
-                                ];
-
-                                let dateText = '';
-                                const bodyText = document.body.textContent;
-
-                                for (const pattern of datePatterns) {
-                                    const match = bodyText.match(pattern);
-                                    if (match) {
-                                        dateText = match[0];
-                                        break;
-                                    }
+                                // Get text from common date locations
+                                const article = document.querySelector('article, main, .content, .post');
+                                if (article) {
+                                    return article.textContent.substring(0, 2000);
                                 }
-
-                                // Check meta tags
-                                const articlePublished = document.querySelector('meta[property="article:published_time"]');
-                                if (articlePublished && !dateText) {
-                                    dateText = articlePublished.content;
-                                }
-
-                                // Get og:image
-                                const ogImage = document.querySelector('meta[property="og:image"]');
-                                const heroImageUrl = ogImage ? ogImage.content : null;
-
-                                return {
-                                    date_text: dateText,
-                                    hero_image_url: heroImageUrl
-                                };
+                                return document.body.textContent.substring(0, 2000);
                             }
                         """)
 
-                        # Parse date
-                        published = self._parse_date(article_metadata['date_text'])
+                        # Use AI to extract date
+                        published = await self._parse_date_with_ai(article_text)
 
                         # ============================================================
-                        # DATE FILTERING: Only process articles from today/yesterday
+                        # DATE FILTERING: Only process recent articles
                         # ============================================================
 
                         if published:
@@ -462,30 +429,15 @@ class IdentityScraper(BaseCustomScraper):
                             # If no date found, include it (better to include than miss)
                             print(f"      ⚠️ No date found - including anyway")
 
-                        # Build hero image
-                        hero_image = None
-                        if article_metadata.get('hero_image_url'):
-                            hero_image = {
-                                "url": article_metadata['hero_image_url'],
-                                "width": None,
-                                "height": None,
-                                "source": "scraper"
-                            }
-                        elif homepage_data.get('image_url'):
-                            hero_image = {
-                                "url": homepage_data['image_url'],
-                                "width": None,
-                                "height": None,
-                                "source": "scraper"
-                            }
+                        # ============================================================
+                        # Create MINIMAL article dict
+                        # Hero image and content will be extracted by scraper.py
+                        # ============================================================
 
-                        # Create article dict
-                        article = self._create_article_dict(
+                        article = self._create_minimal_article_dict(
                             title=homepage_data['title'],
                             link=url,
-                            description=homepage_data.get('description', ''),
-                            published=published,
-                            hero_image=hero_image
+                            published=published
                         )
 
                         if self._validate_article(article):
@@ -516,11 +468,16 @@ class IdentityScraper(BaseCustomScraper):
                 # Step 6: Store ALL Current Headlines (for next run)
                 # ============================================================
 
-                # Store all headlines we saw (both new and old)
                 if not self.tracker:
                     raise RuntimeError("Article tracker not initialized")
 
                 await self.tracker.store_headlines(self.source_id, current_headlines)
+
+                # ============================================================
+                # Step 7: Upload Statistics to R2
+                # ============================================================
+
+                await self._upload_stats_to_r2()
 
                 # ============================================================
                 # Final Summary
@@ -540,6 +497,7 @@ class IdentityScraper(BaseCustomScraper):
 
         except Exception as e:
             print(f"[{self.source_id}] Error in visual scraping: {e}")
+            await self._upload_stats_to_r2()
             import traceback
             traceback.print_exc()
             return []
@@ -596,7 +554,7 @@ async def test_identity_scraper():
 
         # Fetch new articles
         print("\n3. Running visual AI scraping (max 10 new articles)...")
-        articles = await scraper.fetch_articles(hours=24)  # hours parameter ignored, uses max_new=10 internally
+        articles = await scraper.fetch_articles(hours=24)
 
         print(f"\n   ✅ Found {len(articles)} NEW articles")
 
@@ -608,8 +566,7 @@ async def test_identity_scraper():
                 print(f"   Title: {article['title'][:60]}...")
                 print(f"   Link: {article['link']}")
                 print(f"   Published: {article.get('published', 'No date')}")
-                print(f"   Hero Image: {'Yes' if article.get('hero_image') else 'No'}")
-                print(f"   Description: {article.get('description', '')[:100]}...")
+                print(f"   Custom scraped: {article.get('custom_scraped', False)}")
         else:
             print("\n4. No new articles (all previously seen)")
 
