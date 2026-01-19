@@ -149,7 +149,7 @@ class ScrapingStats:
             if self.screenshot_r2_path:
                 print(f"   R2: {self.screenshot_r2_path}")
         else:
-            print(f"📸 Screenshot: Not created")
+            print("📸 Screenshot: Not created")
 
         print("🤖 Vision AI Extraction:")
         print(f"   • Total headlines extracted: {self.headlines_extracted_count}")
@@ -160,7 +160,7 @@ class ScrapingStats:
                 print(f"     ... and {len(self.headlines_extracted) - 5} more")
         print()
 
-        print(f"🗄️  Database Filtering:")
+        print("🗄️  Database Filtering:")
         print(f"   • Previously seen: {self.previously_seen_count}")
         print(f"   • New headlines: {self.new_headlines_count}")
         if self.new_headlines:

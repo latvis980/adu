@@ -1,20 +1,22 @@
 # operators/custom_scrapers/bauwelt.py
 """
-Bauwelt Custom Scraper - Visual AI Approach with Statistics
+Bauwelt Custom Scraper - HTML Pattern + AI Filter Approach
 Scrapes architecture news from Bauwelt (German architecture magazine)
 
 Site: https://www.bauwelt.de/rubriken/bauten/standard_index_2073531.html
-Challenge: None - straightforward access
+Strategy: Extract links matching /rubriken/bauten/ pattern, use AI to filter real articles
 
-Visual Scraping Strategy:
-1. Take screenshot of buildings section page
-2. Use GPT-4o vision to extract article headlines
-3. On first run: Store all headlines in database as "seen"
-4. On subsequent runs: Only process NEW headlines (not in database)
-5. Find headline text in HTML coupled with link using AI
-6. Click link to get publication date using AI (not regex)
-7. AI filtering for content quality
-8. Generate statistics report and upload to R2
+Pattern Analysis:
+- Article links: /rubriken/bauten/Article-Name-Here-1234567.html
+- Index pages: /rubriken/bauten/standard_index_2073531.html (to exclude)
+
+Workflow:
+1. Fetch page HTML
+2. Extract all links matching /rubriken/bauten/ pattern
+3. Use AI to filter: keep article links, exclude index/category pages
+4. Check database for new URLs
+5. For new articles: visit page to get publication date
+6. Return minimal article dicts for main pipeline
 
 Usage:
     scraper = BauweltScraper()
@@ -23,38 +25,42 @@ Usage:
 """
 
 import asyncio
-import base64
-import os as os_module
-from typing import Optional, List, cast
+import re
+import os
+from typing import Optional, List
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+from pydantic import SecretStr
 
 from operators.custom_scraper_base import BaseCustomScraper, custom_scraper_registry
 from storage.article_tracker import ArticleTracker
-from prompts.homepage_analyzer import HOMEPAGE_ANALYZER_PROMPT_TEMPLATE, parse_headlines
 
 
 class BauweltScraper(BaseCustomScraper):
     """
-    Visual AI-powered custom scraper for Bauwelt
-    Uses GPT-4o vision to identify articles on buildings section.
+    HTML pattern-based custom scraper for Bauwelt.
+    Extracts article links from HTML and uses AI to filter real articles.
     """
 
     source_id = "bauwelt"
     source_name = "Bauwelt"
     base_url = "https://www.bauwelt.de/rubriken/bauten/standard_index_2073531.html"
 
-    # Configuration: Maximum age of articles to process (in days)
-    # 14 days = better for testing to get more results
+    # Configuration
     MAX_ARTICLE_AGE_DAYS = 14
+    MAX_NEW_ARTICLES = 10
+
+    # URL pattern for buildings section
+    ARTICLE_PATTERN = re.compile(r'/rubriken/bauten/[^"\'>\s]+\.html')
 
     def __init__(self):
-        """Initialize scraper with article tracker and vision model."""
+        """Initialize scraper with article tracker and LLM."""
         super().__init__()
         self.tracker: Optional[ArticleTracker] = None
-        self.vision_model: Optional[ChatOpenAI] = None
+        self.llm: Optional[ChatOpenAI] = None
 
     async def _ensure_tracker(self):
         """Ensure article tracker is connected."""
@@ -62,451 +68,337 @@ class BauweltScraper(BaseCustomScraper):
             self.tracker = ArticleTracker()
             await self.tracker.connect()
 
-    def _ensure_vision_model(self):
-        """Ensure vision model is initialized."""
-        if not self.vision_model:
-            import os
-            api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
+    def _ensure_llm(self):
+        """Ensure LLM is initialized."""
+        if not self.llm:
+            api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY not set")
 
-            api_key_str = cast(str, api_key)
-
-            self.vision_model = ChatOpenAI(
+            self.llm = ChatOpenAI(
                 model="gpt-4o-mini",
-                api_key=api_key_str,
+                api_key=SecretStr(api_key),
                 temperature=0.1
             )
-            print(f"[{self.source_id}] Vision model initialized")
+            print(f"[{self.source_id}] LLM initialized")
 
-    async def _analyze_homepage_screenshot(self, screenshot_path: str) -> List[str]:
+    def _extract_article_links(self, html: str) -> List[str]:
         """
-        Analyze homepage screenshot with GPT-4o vision to extract headlines.
-
+        Extract all potential article links from HTML.
+        
+        Finds links matching /rubriken/bauten/*.html pattern.
+        
         Args:
-            screenshot_path: Path to screenshot PNG
-
+            html: Page HTML content
+            
         Returns:
-            List of article headlines
+            List of unique URLs (absolute)
         """
-        self._ensure_vision_model()
+        # Find all matching hrefs
+        matches = self.ARTICLE_PATTERN.findall(html)
+        
+        # Convert to absolute URLs and deduplicate
+        urls: set[str] = set()
+        for path in matches:
+            full_url = urljoin("https://www.bauwelt.de", path)
+            urls.add(full_url)
+        
+        return list(urls)
 
-        print(f"[{self.source_id}] 📸 Analyzing screenshot with AI vision...")
-
-        # Read and encode screenshot
-        with open(screenshot_path, 'rb') as f:
-            image_data = base64.b64encode(f.read()).decode('utf-8')
-
-        # Create vision message
-        message = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": HOMEPAGE_ANALYZER_PROMPT_TEMPLATE.format()
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{image_data}"
-                    }
-                }
-            ]
-        )
-
-        # Get response
-        if not self.vision_model:
-            raise RuntimeError("Vision model not initialized")
-
-        response = await asyncio.to_thread(
-            self.vision_model.invoke,
-            [message]
-        )
-
-        # Parse headlines
-        response_text = response.content if hasattr(response, 'content') else str(response)
-        if not isinstance(response_text, str):
-            response_text = str(response_text)
-
-        headlines = parse_headlines(response_text)
-
-        print(f"[{self.source_id}] ✅ Extracted {len(headlines)} headlines from screenshot")
-        return headlines
-
-    async def _find_headline_in_html_with_ai(self, page, headline: str) -> Optional[dict]:
+    async def _filter_article_urls_with_ai(self, urls: List[str]) -> List[str]:
         """
-        Use AI to find the article link for a headline by analyzing HTML context.
+        Use AI to filter real article URLs from index/category pages.
+        
+        Args:
+            urls: List of URLs to filter
+            
+        Returns:
+            List of valid article URLs
+        """
+        self._ensure_llm()
+        
+        if not urls or not self.llm:
+            return []
+        
+        # Create prompt for AI filtering
+        urls_text = "\n".join([f"{i+1}. {url}" for i, url in enumerate(urls)])
+        
+        prompt = f"""Analyze these URLs from Bauwelt (German architecture magazine) and identify which are REAL ARTICLE pages.
 
+URLs:
+{urls_text}
+
+REAL ARTICLES have:
+- Descriptive names with project/location/architect: /rubriken/bauten/Jenaplansschule-am-Hartwege-Weimar-4330561.html
+- End with a numeric ID before .html
+
+EXCLUDE (not articles):
+- Index pages with "standard_index" in URL
+- Category/navigation pages
+
+Respond with ONLY the numbers of real articles, comma-separated.
+Example: 1, 3, 5, 7
+
+If no real articles found, respond: NONE"""
+
+        try:
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            response_text = str(response.content).strip()
+            
+            if response_text.upper() == "NONE":
+                return []
+            
+            # Parse response - extract numbers
+            numbers = re.findall(r'\d+', response_text)
+            
+            # Convert to URLs (1-indexed in prompt)
+            valid_urls: List[str] = []
+            for num_str in numbers:
+                idx = int(num_str) - 1
+                if 0 <= idx < len(urls):
+                    valid_urls.append(urls[idx])
+            
+            return valid_urls
+            
+        except Exception as e:
+            print(f"[{self.source_id}] AI filtering error: {e}")
+            return []
+
+    async def _get_article_date(self, page, url: str) -> Optional[str]:
+        """
+        Visit article page and extract publication date using AI.
+        
         Args:
             page: Playwright page object
-            headline: Headline text to search for
-
+            url: Article URL
+            
         Returns:
-            Dict with title, link, description, image or None
+            ISO format date string or None
         """
-        self._ensure_vision_model()
-
-        # Extract relevant HTML context around potential article links
-        html_context = await page.evaluate("""
-            (headline) => {
-                // Find all article-like containers
-                const containers = document.querySelectorAll(
-                    'article, .post, [class*="post"], [class*="item"], [class*="card"], [class*="teaser"]'
-                );
-
-                const articleData = [];
-
-                containers.forEach((container, index) => {
-                    // Get all links in this container
-                    const links = container.querySelectorAll('a[href]');
-
-                    if (links.length === 0) return;
-
-                    // Get the main link (usually the first or largest)
-                    let mainLink = null;
-                    let mainLinkText = '';
-
-                    links.forEach(link => {
-                        const text = link.textContent.trim();
-                        if (text.length > mainLinkText.length) {
-                            mainLink = link;
-                            mainLinkText = text;
-                        }
-                    });
-
-                    if (!mainLink) return;
-
-                    // Extract data
-                    const href = mainLink.href;
-                    const linkText = mainLinkText;
-
-                    // Get description
-                    const descEl = container.querySelector('p, .excerpt, [class*="excerpt"], [class*="desc"], [class*="text"]');
-                    const description = descEl ? descEl.textContent.trim().substring(0, 150) : '';
-
-                    // Get image
-                    const imgEl = container.querySelector('img');
-                    const imageUrl = imgEl ? imgEl.src : null;
-
-                    // Only include if it has meaningful content
-                    if (linkText.length > 5) {
-                        articleData.push({
-                            index: index,
-                            link_text: linkText,
-                            href: href,
-                            description: description,
-                            image_url: imageUrl
-                        });
+        try:
+            await page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
+            await page.wait_for_timeout(1000)
+            
+            # Extract text for date extraction
+            article_text = await page.evaluate("""
+                () => {
+                    const article = document.querySelector('article, main, .content, .post, .article');
+                    if (article) {
+                        return article.textContent.substring(0, 2000);
                     }
-                });
-
-                return articleData;
-            }
-        """, headline)
-
-        if not html_context or len(html_context) == 0:
-            print(f"      ⚠️ No article containers found on page")
-            return None
-
-        print(f"      🔍 Found {len(html_context)} article containers")
-
-        # Format for AI
-        context_text = "\n\n".join([
-            f"[{item['index']}] LINK_TEXT: {item['link_text']}\n"
-            f"    URL: {item['href']}\n"
-            f"    EXCERPT: {item['description']}"
-            for item in html_context
-        ])
-
-        # AI prompt for semantic matching
-        prompt = f"""You are analyzing article containers from bauwelt.de to find which one matches a target headline.
-
-TARGET HEADLINE: "{headline}"
-
-AVAILABLE ARTICLE CONTAINERS:
-{context_text}
-
-Your task: Find which container index best matches the target headline.
-
-Consider:
-1. Semantic similarity (meaning, not just exact words)
-2. Context clues (description, URL patterns)
-3. Partial matches are OK if context is clear
-
-Respond with ONLY the container index number (e.g., "3") or "NONE" if no good match.
-Do not include any explanation."""
-
-        if not self.vision_model:
-            raise RuntimeError("Vision model not initialized")
-
-        ai_response = await asyncio.to_thread(
-            self.vision_model.invoke,
-            [HumanMessage(content=prompt)]
-        )
-
-        response_text = ai_response.content if hasattr(ai_response, 'content') else str(ai_response)
-        if not isinstance(response_text, str):
-            response_text = str(response_text)
-
-        response_clean = response_text.strip().upper()
-
-        if response_clean == "NONE":
-            return None
-
-        # Extract index number
-        import re
-        match = re.search(r'\d+', response_clean)
-        if not match:
-            return None
-
-        selected_index = int(match.group(0))
-
-        # Find the matching container
-        for item in html_context:
-            if item['index'] == selected_index:
-                return {
-                    'title': item['link_text'],
-                    'link': item['href'],
-                    'description': item['description'],
-                    'image_url': item['image_url']
+                    return document.body.textContent.substring(0, 2000);
                 }
-
-        return None
+            """)
+            
+            # Use base class AI date extraction
+            return self._parse_date_with_ai(article_text)
+            
+        except Exception as e:
+            print(f"[{self.source_id}] Date extraction error for {url}: {e}")
+            return None
 
     async def fetch_articles(self, hours: int = 24) -> list[dict]:
         """
-        Fetch new articles using visual AI approach with statistics tracking.
-
+        Fetch new articles from Bauwelt buildings section.
+        
         Workflow:
-        1. Initialize statistics tracking
-        2. Screenshot buildings section page
-        3. Extract headlines with GPT-4o vision
-        4. Compare with stored headlines to find NEW ones (database filtering)
-        5. For each new headline:
-           - Find it in HTML and get the link (AI matching)
-           - Click link to get publication date (AI extraction)
-           - Filter by date: only keep articles within 14 days
-           - Create article dict
-        6. Generate and upload statistics report
-
+        1. Load page and extract all /rubriken/bauten/ links
+        2. Use AI to filter real articles from index pages
+        3. Check database for new URLs
+        4. For new articles: get publication date
+        5. Filter by date (within MAX_ARTICLE_AGE_DAYS)
+        6. Return minimal article dicts
+        
         Args:
             hours: Ignored (we use database tracking instead)
-
+            
         Returns:
-            List of article dicts (minimal - full scraping done by scraper.py)
+            List of article dicts for main pipeline
         """
         # Initialize statistics tracking
         self._init_stats()
-
-        print(f"[{self.source_id}] 📸 Starting visual AI scraping...")
-
+        
+        print(f"[{self.source_id}] Starting HTML pattern scraping...")
+        
         await self._ensure_tracker()
-
+        self._ensure_llm()
+        
         try:
             page = await self._create_page()
-
+            
             try:
                 # ============================================================
-                # Step 1: Take Screenshot
+                # Step 1: Load Page and Extract Links
                 # ============================================================
                 print(f"[{self.source_id}] Loading buildings section...")
                 await page.goto(self.base_url, timeout=self.timeout, wait_until="networkidle")
                 await page.wait_for_timeout(2000)
-
-                import tempfile
-                screenshot_path = os_module.path.join(tempfile.gettempdir(), f"{self.source_id}_homepage.png")
-
-                await page.screenshot(path=screenshot_path, full_page=False)
-                print(f"[{self.source_id}] 📸 Screenshot saved: {screenshot_path}")
-
-                # Log screenshot stats and upload to R2
-                if self.stats and os_module.path.exists(screenshot_path):
-                    size = os_module.path.getsize(screenshot_path)
-
-                    # Upload screenshot to R2 for audit
-                    r2_path, r2_url = await self._upload_screenshot_to_r2(screenshot_path)
-
-                    # Log with R2 info
-                    self.stats.log_screenshot(screenshot_path, size, r2_path, r2_url)
-
-                # ============================================================
-                # Step 2: Extract Headlines with AI Vision
-                # ============================================================
-                current_headlines = await self._analyze_homepage_screenshot(screenshot_path)
-
-                if not current_headlines:
-                    print(f"[{self.source_id}] No headlines found in screenshot")
+                
+                # Get page HTML
+                html = await page.content()
+                
+                # Extract all potential article links
+                all_links = self._extract_article_links(html)
+                print(f"[{self.source_id}] Found {len(all_links)} links matching /rubriken/bauten/ pattern")
+                
+                if not all_links:
+                    print(f"[{self.source_id}] No links found")
                     if self.stats:
-                        self.stats.log_headlines_extracted([])
                         self.stats.log_final_count(0)
                         self.stats.print_summary()
                         await self._upload_stats_to_r2()
                     return []
-
-                # Log extracted headlines
-                if self.stats:
-                    self.stats.log_headlines_extracted(current_headlines)
-
+                
                 # ============================================================
-                # Step 3: Database Filtering - Find NEW Headlines
+                # Step 2: AI Filter - Real Articles vs Index Pages
+                # ============================================================
+                print(f"[{self.source_id}] Filtering with AI...")
+                article_urls = await self._filter_article_urls_with_ai(all_links)
+                
+                print(f"[{self.source_id}] AI identified {len(article_urls)} real articles")
+                
+                if not article_urls:
+                    print(f"[{self.source_id}] No real articles found after AI filtering")
+                    if self.stats:
+                        self.stats.log_final_count(0)
+                        self.stats.print_summary()
+                        await self._upload_stats_to_r2()
+                    return []
+                
+                # Log URLs as "headlines" for stats
+                if self.stats:
+                    self.stats.log_headlines_extracted(article_urls)
+                
+                # ============================================================
+                # Step 3: Check Database for New Articles
                 # ============================================================
                 if not self.tracker:
                     raise RuntimeError("Article tracker not initialized")
-
-                seen_headlines = await self.tracker.get_stored_headlines(self.source_id)
-                new_headlines = [h for h in current_headlines if h not in seen_headlines]
-
-                print(f"[{self.source_id}] Headlines breakdown:")
-                print(f"   Total extracted: {len(current_headlines)}")
-                print(f"   Previously seen: {len(current_headlines) - len(new_headlines)}")
-                print(f"   New to process: {len(new_headlines)}")
-
-                # Log database filtering stats
+                
+                # Get stored URLs
+                seen_urls = await self.tracker.get_stored_headlines(self.source_id)
+                seen_set = set(seen_urls)
+                
+                # Filter to new articles (not seen before)
+                new_urls = [url for url in article_urls if url not in seen_set]
+                
+                print(f"[{self.source_id}] {len(new_urls)} new articles (not in database)")
+                
+                # Log new URLs
                 if self.stats:
-                    self.stats.log_new_headlines(new_headlines, len(current_headlines))
-
-                if not new_headlines:
-                    print(f"[{self.source_id}] No new headlines - all previously seen")
+                    self.stats.log_new_headlines(new_urls, len(article_urls))
+                
+                if not new_urls:
+                    print(f"[{self.source_id}] No new articles to process")
+                    # Store all current URLs for future reference
+                    await self.tracker.store_headlines(self.source_id, article_urls)
+                    
                     if self.stats:
                         self.stats.log_final_count(0)
                         self.stats.print_summary()
                         await self._upload_stats_to_r2()
                     return []
-
-                # Limit processing
-                MAX_NEW = 10
-                if len(new_headlines) > MAX_NEW:
-                    print(f"[{self.source_id}] Limiting to {MAX_NEW} newest headlines")
-                    new_headlines = new_headlines[:MAX_NEW]
-
+                
+                # Limit to max new articles
+                urls_to_process = new_urls[:self.MAX_NEW_ARTICLES]
+                
                 # ============================================================
-                # Step 4: Process Each New Headline
+                # Step 4: Process Each New Article
                 # ============================================================
-                new_articles = []
+                new_articles: list[dict] = []
                 skipped_old = 0
-                skipped_no_link = 0
-
-                for i, headline in enumerate(new_headlines, 1):
-                    print(f"\n[{self.source_id}] Processing headline {i}/{len(new_headlines)}")
-                    print(f"   Headline: {headline[:60]}...")
-
+                
+                for i, url in enumerate(urls_to_process, 1):
+                    # Extract title from URL for logging
+                    url_title = url.split("/")[-1].replace("-", " ").replace(".html", "")
+                    print(f"\n[{self.source_id}] Processing {i}/{len(urls_to_process)}: {url_title[:50]}...")
+                    
                     try:
-                        # Use AI to find this headline in HTML
-                        homepage_data = await self._find_headline_in_html_with_ai(page, headline)
-
-                        if not homepage_data or not homepage_data.get('link'):
-                            print(f"      ⚠️  Could not find article link")
-                            if self.stats:
-                                self.stats.log_headline_match_failed(headline)
-                            skipped_no_link += 1
-                            continue
-
-                        url = homepage_data['link']
-                        print(f"      🔗 Found link: {url}")
-
-                        # Log successful match
+                        # Get publication date
+                        published = await self._get_article_date(page, url)
+                        
                         if self.stats:
-                            self.stats.log_headline_matched(headline, url)
-
-                        # ============================================
-                        # Navigate to article to get date with AI
-                        # ============================================
-                        await page.goto(url, timeout=self.timeout)
-                        await page.wait_for_timeout(1000)
-
-                        # Extract article text for AI date extraction
-                        article_text = await page.evaluate("""
-                            () => {
-                                // Get text from common date locations
-                                const article = document.querySelector('article, main, .content, .post');
-                                if (article) {
-                                    return article.textContent.substring(0, 2000);
-                                }
-                                return document.body.textContent.substring(0, 2000);
-                            }
-                        """)
-
-                        # Use AI to extract date
-                        published = self._parse_date_with_ai(article_text)
-
-                        if not published:
-                            print(f"      ⚠️ No date found - including article anyway")
-                            if self.stats:
-                                self.stats.log_date_fetch_failed(headline)
+                            if published:
+                                self.stats.log_date_fetched(url_title, url, published)
+                            else:
+                                self.stats.log_date_fetch_failed(url_title)
+                        
+                        # Date filtering
+                        if published:
+                            try:
+                                article_date = datetime.fromisoformat(published.replace('Z', '+00:00'))
+                                current_date = datetime.now(timezone.utc)
+                                days_old = (current_date - article_date).days
+                                
+                                if days_old > self.MAX_ARTICLE_AGE_DAYS:
+                                    print(f"   Skipping old article ({days_old} days old)")
+                                    skipped_old += 1
+                                    continue
+                                
+                                print(f"   Fresh article ({days_old} day(s) old)")
+                            except Exception as e:
+                                print(f"   Date parsing error: {e} - including anyway")
                         else:
-                            if self.stats:
-                                self.stats.log_date_fetched(headline, url, published)
-
-                            # DATE FILTERING: Only process articles within 14 days
-                            article_date = datetime.fromisoformat(published.replace('Z', '+00:00'))
-                            current_date = datetime.now(timezone.utc)
-                            days_old = (current_date - article_date).days
-
-                            if days_old > self.MAX_ARTICLE_AGE_DAYS:
-                                print(f"      ⏭️  Skipping old article ({days_old} days old)")
-                                skipped_old += 1
-                                continue
-
-                            print(f"      ✅ Fresh article ({days_old} day(s) old)")
-
-                        # ============================================
-                        # Create MINIMAL article dict
-                        # Hero image and content will be extracted by scraper.py
-                        # ============================================
+                            print(f"   No date found - including anyway")
+                        
+                        # Log successful processing
+                        if self.stats:
+                            self.stats.log_headline_matched(url_title, url)
+                        
+                        # Create minimal article dict
+                        # Title will be properly extracted by main pipeline
                         article = self._create_minimal_article_dict(
-                            title=homepage_data['title'],
+                            title=url_title,  # Temporary, will be replaced by scraper
                             link=url,
                             published=published
                         )
-
+                        
                         if self._validate_article(article):
                             new_articles.append(article)
-
-                            # Update database with URL
+                            
+                            # Store URL in database
                             await self.tracker.update_headline_url(
                                 self.source_id,
-                                headline,
+                                url_title,
                                 url
                             )
-
-                        # Small delay
+                        
+                        # Small delay between requests
                         await asyncio.sleep(0.5)
-
-                        # Go back to buildings section for next headline
-                        await page.goto(self.base_url, timeout=self.timeout)
-                        await page.wait_for_timeout(1000)
-
+                        
                     except Exception as e:
-                        print(f"      ⚠️ Error processing headline: {e}")
+                        print(f"   Error processing article: {e}")
                         if self.stats:
-                            self.stats.log_error(f"Error processing '{headline[:50]}': {str(e)}")
+                            self.stats.log_error(f"Error processing '{url[-50:]}': {str(e)}")
                         continue
-
+                
                 # ============================================================
-                # Step 5: Store All Headlines and Generate Stats
+                # Step 5: Store All URLs and Finalize
                 # ============================================================
-                await self.tracker.store_headlines(self.source_id, current_headlines)
-
+                # Store all current URLs for future reference
+                await self.tracker.store_headlines(self.source_id, article_urls)
+                
                 # Final Summary
-                print(f"\n[{self.source_id}] 📊 Processing Summary:")
-                print(f"   Headlines extracted: {len(current_headlines)}")
-                print(f"   New headlines: {len(new_headlines)}")
+                print(f"\n[{self.source_id}] Processing Summary:")
+                print(f"   Links found: {len(all_links)}")
+                print(f"   Real articles (AI filter): {len(article_urls)}")
+                print(f"   New articles: {len(new_urls)}")
                 print(f"   Skipped (too old): {skipped_old}")
-                print(f"   Skipped (no link): {skipped_no_link}")
-                print(f"   ✅ Successfully scraped: {len(new_articles)}")
-
+                print(f"   Successfully scraped: {len(new_articles)}")
+                
                 # Log final count and upload stats
                 if self.stats:
                     self.stats.log_final_count(len(new_articles))
                     self.stats.print_summary()
                     await self._upload_stats_to_r2()
-
+                
                 return new_articles
-
+                
             finally:
                 await page.close()
-
+                
         except Exception as e:
-            print(f"[{self.source_id}] Error in visual scraping: {e}")
+            print(f"[{self.source_id}] Error in scraping: {e}")
             if self.stats:
                 self.stats.log_error(f"Critical error: {str(e)}")
                 self.stats.print_summary()
@@ -518,7 +410,7 @@ Do not include any explanation."""
     async def close(self):
         """Close browser and tracker connections."""
         await super().close()
-
+        
         if self.tracker:
             await self.tracker.close()
             self.tracker = None
@@ -533,44 +425,40 @@ custom_scraper_registry.register(BauweltScraper)
 # =============================================================================
 
 async def test_bauwelt_scraper():
-    """Test the visual AI scraper with statistics."""
+    """Test the HTML pattern scraper."""
     print("=" * 60)
-    print("Testing Bauwelt Visual AI Scraper")
+    print("Testing Bauwelt HTML Pattern Scraper")
     print("=" * 60)
-
+    
     scraper = BauweltScraper()
-
+    
     try:
         # Test connection
         print("\n1. Testing connection...")
         connected = await scraper.test_connection()
-
+        
         if not connected:
-            print("   ❌ Connection failed")
+            print("   Connection failed")
             return
-
+        
         # Show tracker stats
         print("\n2. Checking tracker stats...")
         await scraper._ensure_tracker()
-
-        if not scraper.tracker:
-            print("   ⚠️ Tracker not initialized")
-            return
-
-        stats = await scraper.tracker.get_stats(source_id="bauwelt")
-
-        print(f"   Total articles in database: {stats['total_articles']}")
-        if stats['oldest_seen']:
-            print(f"   Oldest: {stats['oldest_seen']}")
-        if stats['newest_seen']:
-            print(f"   Newest: {stats['newest_seen']}")
-
+        
+        if scraper.tracker:
+            stats = await scraper.tracker.get_stats(source_id="bauwelt")
+            print(f"   Total articles in database: {stats['total_articles']}")
+            if stats['oldest_seen']:
+                print(f"   Oldest: {stats['oldest_seen']}")
+            if stats['newest_seen']:
+                print(f"   Newest: {stats['newest_seen']}")
+        
         # Fetch new articles
-        print("\n3. Running visual AI scraping (max 10 new articles)...")
+        print("\n3. Running HTML pattern scraping...")
         articles = await scraper.fetch_articles(hours=24)
-
-        print(f"\n   ✅ Found {len(articles)} NEW articles")
-
+        
+        print(f"\n   Found {len(articles)} NEW articles")
+        
         # Display articles
         if articles:
             print("\n4. New articles:")
@@ -581,15 +469,14 @@ async def test_bauwelt_scraper():
                 print(f"   Published: {article.get('published', 'No date')}")
         else:
             print("\n4. No new articles (all previously seen)")
-
+        
         print("\n" + "=" * 60)
-        print("Test complete! Statistics uploaded to R2.")
+        print("Test complete!")
         print("=" * 60)
-
+        
     finally:
         await scraper.close()
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(test_bauwelt_scraper())
