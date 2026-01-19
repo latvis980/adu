@@ -405,7 +405,7 @@ Do not include any explanation."""
                         """)
 
                         # Use AI to extract date
-                        published = await self._parse_date_with_ai(article_text)
+                        published = self._parse_date_with_ai(article_text)
 
                         # ============================================================
                         # DATE FILTERING: Only process recent articles
