@@ -156,6 +156,23 @@ SOURCES = {
         "custom_scraper": True,
     },
 
+    "landscape_architecture_magazine": {
+        "name": "Landscape Architecture Magazine",
+        "domains": ["landscapearchitecturemagazine.org"],
+        "tier": 2,
+        "region": "north_america",
+        "category": "landscape",
+        "custom_scraper": True,
+    },
+    "world_landscape_architect": {
+        "name": "World Landscape Architect",
+        "domains": ["worldlandscapearchitect.com"],
+        "tier": 2,
+        "region": "international",
+        "category": "landscape",
+        "custom_scraper": True,
+    },
+
 
     # =========================================================================
     # TIER 2 - Europe

@@ -30,6 +30,8 @@ from operators.custom_scrapers.japan_architects import JapanArchitectsScraper
 from operators.custom_scrapers.domus import DomusScraper
 from operators.custom_scrapers.metalocus import MetalocusScraper
 from operators.custom_scrapers.metropolis import MetropolisScraper
+from operators.custom_scrapers.world_landscape_architect import WorldLandscapeArchitectScraper
+from operators.custom_scrapers.landscape_architecture_magazine import LandscapeArchitectureMagazineScraper
 
 # Convenience functions
 def get_custom_scraper(source_id: str) -> BaseCustomScraper:
@@ -94,6 +96,8 @@ __all__ = [
     'DomusScraper',
     'MetalocusScraper',
     'MetropolisScraper',
+    'WorldLandscapeArchitectScraper',
+    'LandscapeArchitectureMagazineScraper',
     'get_custom_scraper',
     'has_custom_scraper',
     'list_custom_scrapers',

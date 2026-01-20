@@ -72,6 +72,8 @@ from operators.custom_scrapers.japan_architects import JapanArchitectsScraper
 from operators.custom_scrapers.domus import DomusScraper
 from operators.custom_scrapers.metalocus import MetalocusScraper
 from operators.custom_scrapers.metropolis import MetropolisScraper
+from operators.custom_scrapers.world_landscape_architect import WorldLandscapeArchitectScraper
+from operators.custom_scrapers.landscape_architecture_magazine import LandscapeArchitectureMagazineScraper
 
 # Default configuration
 DEFAULT_HOURS_LOOKBACK = 24
@@ -446,7 +448,6 @@ async def run_pipeline(
 
         all_articles = []
 
-        # Map of custom scraper instances
         CUSTOM_SCRAPER_MAP = {
             "identity": IdentityScraper,
             "archiposition": ArchipositionScraper,
@@ -457,6 +458,8 @@ async def run_pipeline(
             "domus": DomusScraper,
             "metalocus": MetalocusScraper,
             "metropolis": MetropolisScraper,
+            "world_landscape_architect": WorldLandscapeArchitectScraper,
+            "landscape_architecture_magazine": LandscapeArchitectureMagazineScraper,
         }
 
         # Separate RSS sources from custom scrapers
