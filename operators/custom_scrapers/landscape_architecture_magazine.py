@@ -100,7 +100,7 @@ class LandscapeArchitectureMagazineScraper(BaseCustomScraper):
         # Must start with /
         if not path.startswith('/'):
             return False
-            
+
         # Check exclusions first
         if self._is_excluded_path(path):
             return False
@@ -112,7 +112,7 @@ class LandscapeArchitectureMagazineScraper(BaseCustomScraper):
 
         return False
 
-    def _extract_article_links(self, html: str) -> List[Tuple[str, str]]:
+    def _extract_articles_from_html(self, html: str) -> List[Tuple[str, str]]:
         """
         Extract potential article links with titles from HTML.
         Returns list of (url, title) tuples.
@@ -124,40 +124,40 @@ class LandscapeArchitectureMagazineScraper(BaseCustomScraper):
         # Find all links
         for link in soup.find_all('a', href=True):
             href = link.get('href', '')
-            
+
             # Skip empty or special links
             if not href or href.startswith(('#', 'javascript:', 'mailto:')):
                 continue
-                
+
             # Parse URL
             parsed = urlparse(href)
-            
+
             # Only process internal links
             if parsed.netloc and 'landscapearchitecturemagazine.org' not in parsed.netloc:
                 continue
-            
+
             # Get the path
             path = parsed.path
             if not path:
                 continue
-            
+
             # Normalize path
             if not path.startswith('/'):
                 path = '/' + path
-            
+
             # Check if it's a valid article URL
             if self._is_valid_article_url(path):
                 full_url = urljoin(self.base_url, path)
-                
+
                 # Normalize URL (remove trailing slash for consistency)
                 full_url = full_url.rstrip('/')
-                
+
                 if full_url not in seen_urls:
                     seen_urls.add(full_url)
-                    
+
                     # Try to get title from link text or nearby elements
                     title = link.get_text(strip=True)
-                    
+
                     # If link text is too short, look for nearby heading
                     if not title or len(title) < 10:
                         parent = link.find_parent(['article', 'div', 'section'])
@@ -165,12 +165,12 @@ class LandscapeArchitectureMagazineScraper(BaseCustomScraper):
                             title_el = parent.find(['h1', 'h2', 'h3', 'h4'])
                             if title_el:
                                 title = title_el.get_text(strip=True)
-                    
+
                     # Fall back to slug if no good title found
                     if not title or len(title) < 10:
                         slug = path.strip('/').split('/')[-1]
                         title = slug.replace('-', ' ').title()
-                    
+
                     articles.append((full_url, title))
 
         return articles
@@ -178,81 +178,123 @@ class LandscapeArchitectureMagazineScraper(BaseCustomScraper):
     async def fetch_articles(self, hours: int = 24) -> list[dict]:
         """
         Fetch new articles from Landscape Architecture Magazine homepage.
-        
-        Returns minimal article dicts for main pipeline processing.
-        """
-        await self._ensure_tracker()
-        await self._init_stats()
 
-        print(f"\n[{self.source_id}] Starting article fetch...")
+        Workflow:
+        1. Load homepage
+        2. Extract all article links matching /YYYY/* pattern (with deduplication)
+        3. Check database for new URLs
+        4. Return minimal article dicts for new URLs
+        5. Main pipeline handles: content, hero image (og:image), dates
+
+        Args:
+            hours: Ignored (we use database tracking instead)
+
+        Returns:
+            List of minimal article dicts
+        """
+        # Initialize statistics tracking
+        self._init_stats()
+
+        print(f"[{self.source_id}] Starting HTTP pattern scraping...")
+
+        await self._ensure_tracker()
 
         try:
-            # Fetch homepage HTML
-            html = await self._fetch_html(self.base_url)
-            if not html:
-                print(f"[{self.source_id}] Failed to fetch homepage")
-                return []
+            page = await self._create_page()
 
-            # Extract article links
-            extracted = self._extract_article_links(html)
-            print(f"[{self.source_id}] Extracted {len(extracted)} potential article URLs")
+            try:
+                # ============================================================
+                # Step 1: Load Homepage
+                # ============================================================
+                print(f"[{self.source_id}] Loading homepage...")
+                await page.goto(self.base_url, timeout=self.timeout, wait_until="networkidle")
+                await page.wait_for_timeout(2000)
 
-            if not extracted:
-                print(f"[{self.source_id}] No article links found")
-                return []
+                # Get page HTML
+                html = await page.content()
 
-            # Create URL to title mapping
-            url_to_title = {url: title for url, title in extracted}
-            all_urls = list(url_to_title.keys())
+                # ============================================================
+                # Step 2: Extract Article Links (with deduplication)
+                # ============================================================
+                extracted = self._extract_articles_from_html(html)
+                print(f"[{self.source_id}] Found {len(extracted)} unique article links")
 
-            # Filter for new articles using tracker
-            new_urls = await self.tracker.filter_new_articles(
-                source_id=self.source_id,
-                urls=all_urls
-            )
+                if not extracted:
+                    print(f"[{self.source_id}] No articles found")
+                    if self.stats:
+                        self.stats.log_final_count(0)
+                        self.stats.print_summary()
+                        await self._upload_stats_to_r2()
+                    return []
 
-            print(f"[{self.source_id}] New articles: {len(new_urls)} of {len(all_urls)}")
+                # ============================================================
+                # Step 3: Filter New URLs via Database
+                # ============================================================
+                # Create URL to title mapping
+                url_to_title = {url: title for url, title in extracted}
+                all_urls = list(url_to_title.keys())
 
-            if not new_urls:
-                print(f"[{self.source_id}] No new articles to process")
-                if self.stats:
-                    self.stats.log_final_count(0)
-                    self.stats.print_summary()
-                    await self._upload_stats_to_r2()
-                return []
+                # Ensure tracker is available
+                if not self.tracker:
+                    print(f"[{self.source_id}] Error: Article tracker not initialized")
+                    return []
 
-            # Mark new URLs as seen
-            await self.tracker.mark_as_seen(self.source_id, new_urls)
-
-            # Build article list
-            new_articles = []
-            for url in new_urls[:self.MAX_NEW_ARTICLES]:
-                title = url_to_title.get(url, url.strip('/').split('/')[-1].replace('-', ' ').title())
-
-                # Create minimal article dict
-                article = self._create_minimal_article_dict(
-                    title=title,
-                    link=url,
-                    published=None  # Will be extracted by main pipeline
+                # Filter for new articles using tracker
+                new_urls = await self.tracker.filter_new_articles(
+                    source_id=self.source_id,
+                    urls=all_urls
                 )
 
-                if self._validate_article(article):
-                    new_articles.append(article)
-                    print(f"[{self.source_id}]    Added: {title[:60]}...")
+                print(f"[{self.source_id}] New articles: {len(new_urls)} of {len(all_urls)}")
 
-            # Final Summary
-            print(f"\n[{self.source_id}] Processing Summary:")
-            print(f"   Articles found: {len(extracted)}")
-            print(f"   New articles: {len(new_urls)}")
-            print(f"   Returning to pipeline: {len(new_articles)}")
+                if not new_urls:
+                    print(f"[{self.source_id}] No new articles to process")
+                    if self.stats:
+                        self.stats.log_final_count(0)
+                        self.stats.print_summary()
+                        await self._upload_stats_to_r2()
+                    return []
 
-            # Log final count and upload stats
-            if self.stats:
-                self.stats.log_final_count(len(new_articles))
-                self.stats.print_summary()
-                await self._upload_stats_to_r2()
+                # ============================================================
+                # Step 4: Build Article List
+                # ============================================================
+                new_articles = []
+                for url in new_urls[:self.MAX_NEW_ARTICLES]:
+                    title = url_to_title.get(url, url.strip('/').split('/')[-1].replace('-', ' ').title())
 
-            return new_articles
+                    # Create minimal article dict
+                    article = self._create_minimal_article_dict(
+                        title=title,
+                        link=url,
+                        published=None  # Will be extracted by main pipeline
+                    )
+
+                    if self._validate_article(article):
+                        new_articles.append(article)
+                        print(f"[{self.source_id}]    Added: {title[:60]}...")
+
+                # ============================================================
+                # Step 5: Mark URLs as Seen and Finalize
+                # ============================================================
+                # Mark all discovered article URLs as seen
+                await self.tracker.mark_as_seen(self.source_id, all_urls)
+
+                # Final Summary
+                print(f"\n[{self.source_id}] Processing Summary:")
+                print(f"   Articles found: {len(extracted)}")
+                print(f"   New articles: {len(new_urls)}")
+                print(f"   Returning to pipeline: {len(new_articles)}")
+
+                # Log final count and upload stats
+                if self.stats:
+                    self.stats.log_final_count(len(new_articles))
+                    self.stats.print_summary()
+                    await self._upload_stats_to_r2()
+
+                return new_articles
+
+            finally:
+                await page.close()
 
         except Exception as e:
             print(f"[{self.source_id}] Error in scraping: {e}")
@@ -307,20 +349,36 @@ async def test_landscape_architecture_magazine_scraper():
             return
 
         # Show tracker stats
-        print("\n2. Checking article tracker stats...")
+        print("\n2. Checking tracker stats...")
         await scraper._ensure_tracker()
-        stats = await scraper.tracker.get_source_stats(scraper.source_id)
-        print(f"   Previously seen: {stats['total_seen']} articles")
-        print(f"   Seen today: {stats['seen_today']}")
 
-        # Fetch articles
-        print("\n3. Fetching articles...")
-        articles = await scraper.fetch_articles()
+        if scraper.tracker:
+            stats = await scraper.tracker.get_stats(source_id="landscape_architecture_magazine")
+            print(f"   Total articles in database: {stats['total_articles']}")
+            if stats['oldest_seen']:
+                print(f"   Oldest: {stats['oldest_seen']}")
+            if stats['newest_seen']:
+                print(f"   Newest: {stats['newest_seen']}")
 
-        print(f"\n4. Results: {len(articles)} articles")
-        for i, art in enumerate(articles, 1):
-            print(f"\n   [{i}] {art['title'][:70]}...")
-            print(f"       URL: {art['link']}")
+        # Fetch new articles
+        print("\n3. Running HTTP pattern scraping...")
+        articles = await scraper.fetch_articles(hours=24)
+
+        print(f"\n   Found {len(articles)} NEW articles")
+
+        # Display articles
+        if articles:
+            print("\n4. New articles:")
+            for i, article in enumerate(articles, 1):
+                print(f"\n   --- Article {i} ---")
+                print(f"   Title: {article['title'][:60]}...")
+                print(f"   Link: {article['link']}")
+        else:
+            print("\n4. No new articles (all previously seen)")
+
+        print("\n" + "=" * 60)
+        print("Test complete!")
+        print("=" * 60)
 
     finally:
         await scraper.close()

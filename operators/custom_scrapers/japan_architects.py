@@ -20,6 +20,7 @@ HTML Structure:
 
 Requirements:
 - User-Agent header required to avoid 403
+- Uses cloudscraper as fallback for anti-bot protection
 
 Usage:
     scraper = JapanArchitectsScraper()
@@ -42,6 +43,14 @@ from pydantic import SecretStr
 from operators.custom_scraper_base import BaseCustomScraper, custom_scraper_registry
 from storage.article_tracker import ArticleTracker
 
+# Try to import cloudscraper for fallback
+try:
+    import cloudscraper
+    CLOUDSCRAPER_AVAILABLE = True
+except ImportError:
+    CLOUDSCRAPER_AVAILABLE = False
+    print("[japan_architects] cloudscraper not installed - fallback disabled")
+
 
 class JapanArchitectsScraper(BaseCustomScraper):
     """
@@ -56,9 +65,17 @@ class JapanArchitectsScraper(BaseCustomScraper):
     # Configuration
     MAX_ARTICLE_AGE_DAYS = 14
     MAX_NEW_ARTICLES = 15
+    SCRAPER_TIMEOUT = 30000  # 30 seconds for this site
 
     # URL pattern for architecture news
     ARTICLE_PATTERN = re.compile(r'/ja/architecture-news/[^"\'>\s]+')
+
+    # User agent for requests
+    USER_AGENT = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    )
 
     def __init__(self):
         """Initialize scraper with article tracker."""
@@ -237,12 +254,63 @@ Do not use emoji."""
         except Exception:
             return True
 
+    def _fetch_with_cloudscraper(self) -> Optional[str]:
+        """
+        Fallback method using cloudscraper to bypass anti-bot protection.
+
+        Returns:
+            HTML content or None if failed
+        """
+        if not CLOUDSCRAPER_AVAILABLE:
+            print(f"[{self.source_id}] cloudscraper not available")
+            return None
+
+        print(f"[{self.source_id}] Trying cloudscraper fallback...")
+
+        try:
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    'browser': 'chrome',
+                    'platform': 'darwin',
+                    'mobile': False
+                },
+                delay=5
+            )
+
+            # Set headers
+            headers = {
+                'User-Agent': self.USER_AGENT,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5,ja;q=0.3',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+
+            response = scraper.get(
+                self.base_url,
+                headers=headers,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                print(f"[{self.source_id}] cloudscraper success - got {len(response.text)} bytes")
+                return response.text
+            else:
+                print(f"[{self.source_id}] cloudscraper failed with status {response.status_code}")
+                return None
+
+        except Exception as e:
+            print(f"[{self.source_id}] cloudscraper error: {e}")
+            return None
+
     async def fetch_articles(self, hours: int = 24) -> list[dict]:
         """
         Fetch new articles from Japan Architects.
 
         Workflow:
-        1. Load homepage with User-Agent header
+        1. Load homepage with User-Agent header (try browser first, cloudscraper fallback)
         2. Extract all /ja/architecture-news/ links + HTML blocks
         3. Check database for new URLs
         4. For new articles: use AI to extract date from HTML block
@@ -264,140 +332,179 @@ Do not use emoji."""
         await self._ensure_tracker()
         self._ensure_llm()
 
+        html: Optional[str] = None
+        browser_success = False
+
+        # ============================================================
+        # Step 1: Load Homepage (Browser first, cloudscraper fallback)
+        # ============================================================
         try:
             page = await self._create_page()
 
-            # Set User-Agent header (required for this site)
+            # Set comprehensive headers
             await page.set_extra_http_headers({
-                "User-Agent": self.user_agent
+                "User-Agent": self.USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5,ja;q=0.3",
+                "Accept-Encoding": "gzip, deflate, br",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
             })
 
             try:
-                # ============================================================
-                # Step 1: Load Homepage
-                # ============================================================
-                print(f"[{self.source_id}] Loading homepage...")
-                await page.goto(self.base_url, timeout=self.timeout, wait_until="networkidle")
-                await page.wait_for_timeout(2000)
+                print(f"[{self.source_id}] Loading homepage with browser...")
+
+                # Use domcontentloaded instead of networkidle (faster, avoids timeout)
+                await page.goto(
+                    self.base_url,
+                    timeout=self.SCRAPER_TIMEOUT,
+                    wait_until="domcontentloaded"
+                )
+
+                # Wait for content to render
+                await page.wait_for_timeout(3000)
 
                 # Get page HTML
                 html = await page.content()
+                browser_success = True
+                print(f"[{self.source_id}] Browser success - got {len(html)} bytes")
 
-                # ============================================================
-                # Step 2: Extract Articles from HTML
-                # ============================================================
-                print(f"[{self.source_id}] Extracting articles from HTML...")
-                extracted = self._extract_articles_from_html(html)
-
-                print(f"[{self.source_id}] Found {len(extracted)} articles matching /ja/architecture-news/ pattern")
-
-                if not extracted:
-                    print(f"[{self.source_id}] No articles found")
-                    if self.stats:
-                        self.stats.log_final_count(0)
-                        self.stats.print_summary()
-                        await self._upload_stats_to_r2()
-                    return []
-
-                # ============================================================
-                # Step 3: Check Database for New URLs
-                # ============================================================
-                if not self.tracker:
-                    raise RuntimeError("Article tracker not initialized")
-
-                all_urls = [url for url, _, _ in extracted]
-                seen_urls = await self.tracker.get_stored_headlines(self.source_id)
-
-                # Find new articles
-                new_articles_data = [
-                    (url, title, html_block)
-                    for url, title, html_block in extracted
-                    if url not in seen_urls
-                ]
-
-                print(f"[{self.source_id}] Database check:")
-                print(f"   Total extracted: {len(extracted)}")
-                print(f"   Already seen: {len(extracted) - len(new_articles_data)}")
-                print(f"   New articles: {len(new_articles_data)}")
-
-                if not new_articles_data:
-                    print(f"[{self.source_id}] No new articles to process")
-                    await self.tracker.store_headlines(self.source_id, all_urls)
-                    if self.stats:
-                        self.stats.log_final_count(0)
-                        self.stats.print_summary()
-                        await self._upload_stats_to_r2()
-                    return []
-
-                # ============================================================
-                # Step 4: Extract Dates and Build Results
-                # ============================================================
-                print(f"\n[{self.source_id}] Extracting dates with AI...")
-                new_articles: list[dict] = []
-                skipped_old = 0
-
-                for url, title, html_block in new_articles_data[:self.MAX_NEW_ARTICLES]:
-                    print(f"\n   Processing: {title[:50]}...")
-
-                    # Extract date using AI
-                    date_iso = self._extract_date_with_ai(html_block, title)
-
-                    if date_iso:
-                        print(f"      Date: {date_iso[:10]}")
-                        if self.stats:
-                            self.stats.log_date_fetched(title, url, date_iso[:10])
-                    else:
-                        print(f"      Date: Not found")
-                        if self.stats:
-                            self.stats.log_date_fetch_failed(title)
-
-                    # Check date limit
-                    if not self._is_within_age_limit(date_iso):
-                        print(f"      Skipped (too old)")
-                        skipped_old += 1
-                        if self.stats:
-                            self.stats.log_filter_rejected(title, url, "Too old")
-                        continue
-
-                    # Build article dict
-                    article = {
-                        'title': title,
-                        'link': url,
-                        'source_id': self.source_id,
-                    }
-
-                    if date_iso:
-                        article['published'] = date_iso
-
-                    new_articles.append(article)
-
-                    if self.stats:
-                        self.stats.log_filter_passed(title, url, "Within date range")
-
-                    print(f"      Added")
-
-                # ============================================================
-                # Step 5: Store All URLs and Finalize
-                # ============================================================
-                await self.tracker.store_headlines(self.source_id, all_urls)
-
-                # Final Summary
-                print(f"\n[{self.source_id}] Processing Summary:")
-                print(f"   Articles found: {len(extracted)}")
-                print(f"   New articles: {len(new_articles_data)}")
-                print(f"   Skipped (too old): {skipped_old}")
-                print(f"   Successfully scraped: {len(new_articles)}")
-
-                # Log final count and upload stats
-                if self.stats:
-                    self.stats.log_final_count(len(new_articles))
-                    self.stats.print_summary()
-                    await self._upload_stats_to_r2()
-
-                return new_articles
+            except Exception as browser_error:
+                print(f"[{self.source_id}] Browser failed: {browser_error}")
 
             finally:
                 await page.close()
+
+        except Exception as e:
+            print(f"[{self.source_id}] Browser initialization failed: {e}")
+
+        # Try cloudscraper fallback if browser failed
+        if not browser_success or not html:
+            html = self._fetch_with_cloudscraper()
+
+        # Check if we have HTML content
+        if not html:
+            print(f"[{self.source_id}] Failed to fetch page with both browser and cloudscraper")
+            if self.stats:
+                self.stats.log_error("Failed to fetch page - both browser and cloudscraper failed")
+                self.stats.print_summary()
+                await self._upload_stats_to_r2()
+            return []
+
+        try:
+            # ============================================================
+            # Step 2: Extract Articles from HTML
+            # ============================================================
+            print(f"[{self.source_id}] Extracting articles from HTML...")
+            extracted = self._extract_articles_from_html(html)
+
+            print(f"[{self.source_id}] Found {len(extracted)} articles matching /ja/architecture-news/ pattern")
+
+            if not extracted:
+                print(f"[{self.source_id}] No articles found")
+                if self.stats:
+                    self.stats.log_final_count(0)
+                    self.stats.print_summary()
+                    await self._upload_stats_to_r2()
+                return []
+
+            # ============================================================
+            # Step 3: Check Database for New URLs
+            # ============================================================
+            if not self.tracker:
+                raise RuntimeError("Article tracker not initialized")
+
+            all_urls = [url for url, _, _ in extracted]
+            seen_urls = await self.tracker.get_stored_headlines(self.source_id)
+
+            # Find new articles
+            new_articles_data = [
+                (url, title, html_block)
+                for url, title, html_block in extracted
+                if url not in seen_urls
+            ]
+
+            print(f"[{self.source_id}] Database check:")
+            print(f"   Total extracted: {len(extracted)}")
+            print(f"   Already seen: {len(extracted) - len(new_articles_data)}")
+            print(f"   New articles: {len(new_articles_data)}")
+
+            if not new_articles_data:
+                print(f"[{self.source_id}] No new articles to process")
+                await self.tracker.store_headlines(self.source_id, all_urls)
+                if self.stats:
+                    self.stats.log_final_count(0)
+                    self.stats.print_summary()
+                    await self._upload_stats_to_r2()
+                return []
+
+            # ============================================================
+            # Step 4: Extract Dates and Build Results
+            # ============================================================
+            print(f"\n[{self.source_id}] Extracting dates with AI...")
+            new_articles: list[dict] = []
+            skipped_old = 0
+
+            for url, title, html_block in new_articles_data[:self.MAX_NEW_ARTICLES]:
+                print(f"\n   Processing: {title[:50]}...")
+
+                # Extract date using AI
+                date_iso = self._extract_date_with_ai(html_block, title)
+
+                if date_iso:
+                    print(f"      Date: {date_iso[:10]}")
+                    if self.stats:
+                        self.stats.log_date_fetched(title, url, date_iso[:10])
+                else:
+                    print(f"      Date: Not found")
+                    if self.stats:
+                        self.stats.log_date_fetch_failed(title)
+
+                # Check date limit
+                if not self._is_within_age_limit(date_iso):
+                    print(f"      Skipped (too old)")
+                    skipped_old += 1
+                    if self.stats:
+                        self.stats.log_filter_rejected(title, url, "Too old")
+                    continue
+
+                # Build article dict
+                article = {
+                    'title': title,
+                    'link': url,
+                    'source_id': self.source_id,
+                }
+
+                if date_iso:
+                    article['published'] = date_iso
+
+                new_articles.append(article)
+
+                if self.stats:
+                    self.stats.log_filter_passed(title, url, "Within date range")
+
+                print(f"      Added")
+
+            # ============================================================
+            # Step 5: Store All URLs and Finalize
+            # ============================================================
+            await self.tracker.store_headlines(self.source_id, all_urls)
+
+            # Final Summary
+            print(f"\n[{self.source_id}] Processing Summary:")
+            print(f"   Articles found: {len(extracted)}")
+            print(f"   New articles: {len(new_articles_data)}")
+            print(f"   Skipped (too old): {skipped_old}")
+            print(f"   Successfully scraped: {len(new_articles)}")
+
+            # Log final count and upload stats
+            if self.stats:
+                self.stats.log_final_count(len(new_articles))
+                self.stats.print_summary()
+                await self._upload_stats_to_r2()
+
+            return new_articles
 
         except Exception as e:
             print(f"[{self.source_id}] Error in scraping: {e}")
