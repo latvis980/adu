@@ -239,9 +239,6 @@ class WorldLandscapeArchitectScraper(BaseCustomScraper):
         Returns:
             List of minimal article dicts
         """
-        # Initialize statistics tracking
-        self._init_stats()
-
         print(f"[{self.source_id}] Starting HTTP pattern scraping...")
 
         await self._ensure_tracker()
@@ -268,10 +265,6 @@ class WorldLandscapeArchitectScraper(BaseCustomScraper):
 
                 if not extracted:
                     print(f"[{self.source_id}] No articles found")
-                    if self.stats:
-                        self.stats.log_final_count(0)
-                        self.stats.print_summary()
-                        await self._upload_stats_to_r2()
                     return []
 
                 # ============================================================
@@ -296,10 +289,6 @@ class WorldLandscapeArchitectScraper(BaseCustomScraper):
 
                 if not new_urls:
                     print(f"[{self.source_id}] No new articles to process")
-                    if self.stats:
-                        self.stats.log_final_count(0)
-                        self.stats.print_summary()
-                        await self._upload_stats_to_r2()
                     return []
 
                 # ============================================================
@@ -332,12 +321,6 @@ class WorldLandscapeArchitectScraper(BaseCustomScraper):
                 print(f"   New articles: {len(new_urls)}")
                 print(f"   Returning to pipeline: {len(new_articles)}")
 
-                # Log final count and upload stats
-                if self.stats:
-                    self.stats.log_final_count(len(new_articles))
-                    self.stats.print_summary()
-                    await self._upload_stats_to_r2()
-
                 return new_articles
 
             finally:
@@ -345,10 +328,6 @@ class WorldLandscapeArchitectScraper(BaseCustomScraper):
 
         except Exception as e:
             print(f"[{self.source_id}] Error in scraping: {e}")
-            if self.stats:
-                self.stats.log_error(f"Critical error: {str(e)}")
-                self.stats.print_summary()
-                await self._upload_stats_to_r2()
             import traceback
             traceback.print_exc()
             return []
