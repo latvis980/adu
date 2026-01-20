@@ -107,9 +107,6 @@ class DomusScraper(BaseCustomScraper):
         Returns:
             List of minimal article dicts for main pipeline
         """
-        # Initialize statistics tracking
-        self._init_stats()
-
         print(f"[{self.source_id}] Starting HTML pattern scraping...")
 
         await self._ensure_tracker()
@@ -134,15 +131,7 @@ class DomusScraper(BaseCustomScraper):
 
                 if not all_links:
                     print(f"[{self.source_id}] No links found")
-                    if self.stats:
-                        self.stats.log_final_count(0)
-                        self.stats.print_summary()
-                        await self._upload_stats_to_r2()
                     return []
-
-                # Log extracted links
-                if self.stats:
-                    self.stats.log_headlines_extracted(all_links)
 
                 # ============================================================
                 # Step 2: Filter New URLs via Database
@@ -157,16 +146,8 @@ class DomusScraper(BaseCustomScraper):
                 print(f"   Previously seen: {len(all_links) - len(new_urls)}")
                 print(f"   New to process: {len(new_urls)}")
 
-                # Log database filtering stats
-                if self.stats:
-                    self.stats.log_new_headlines(new_urls, len(all_links))
-
                 if not new_urls:
                     print(f"[{self.source_id}] No new articles to process")
-                    if self.stats:
-                        self.stats.log_final_count(0)
-                        self.stats.print_summary()
-                        await self._upload_stats_to_r2()
                     return []
 
                 # Limit to max new articles
@@ -204,12 +185,6 @@ class DomusScraper(BaseCustomScraper):
                 print(f"   New articles: {len(new_urls)}")
                 print(f"   Returning to pipeline: {len(new_articles)}")
 
-                # Log final count and upload stats
-                if self.stats:
-                    self.stats.log_final_count(len(new_articles))
-                    self.stats.print_summary()
-                    await self._upload_stats_to_r2()
-
                 return new_articles
 
             finally:
@@ -217,10 +192,6 @@ class DomusScraper(BaseCustomScraper):
 
         except Exception as e:
             print(f"[{self.source_id}] Error in scraping: {e}")
-            if self.stats:
-                self.stats.log_error(f"Critical error: {str(e)}")
-                self.stats.print_summary()
-                await self._upload_stats_to_r2()
             import traceback
             traceback.print_exc()
             return []
