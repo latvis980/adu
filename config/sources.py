@@ -1,18 +1,18 @@
 # config/sources.py
 """
-News Source Registry
-Central configuration for all monitored architecture and design news sources.
+News Source Registry - RSS Pipeline
+Configuration for RSS feed sources only.
+
+This is the RSS-only version for the dedicated RSS service.
+Custom scrapers are handled by a separate service.
 
 Organization:
     - Tier 1: Global Primary Sources (high volume, daily monitoring)
     - Tier 2: Regional Sources (organized by geography)
 
-Note: Sources marked with requires_user_agent=True need browser User-Agent
-      to avoid 403 blocks. Some may only work from certain IP ranges (Railway vs Replit).
-
 Usage:
     from config.sources import get_source_name, get_source_config, SOURCES
-    from config.sources import get_sources_by_tier, get_sources_by_region
+    from config.sources import get_sources_by_tier, get_all_source_ids
 """
 
 from urllib.parse import urlparse
@@ -20,7 +20,7 @@ from typing import Optional
 
 
 # =============================================================================
-# Source Configuration - 19 Sources (18 confirmed + 1 Railway-only)
+# RSS Source Configuration
 # =============================================================================
 
 SOURCES = {
@@ -60,8 +60,6 @@ SOURCES = {
         "region": "uk",
         "scrape_timeout": 20000,
     },
-    # Archpaper: Works in browser, returns 403 from Replit IPs
-    # Keep it - might work on Railway which has different IPs
     "archpaper": {
         "name": "The Architect's Newspaper",
         "domains": ["archpaper.com", "www.archpaper.com"],
@@ -69,7 +67,7 @@ SOURCES = {
         "tier": 1,
         "region": "north_america",
         "scrape_timeout": 20000,
-        "requires_user_agent": True,  # Blocks bot requests
+        "requires_user_agent": True,
     },
 
     # =========================================================================
@@ -128,7 +126,7 @@ SOURCES = {
         "region": "north_america",
         "category": "urbanism",
         "scrape_timeout": 20000,
-        "requires_user_agent": True,  # Has Cloudflare protection
+        "requires_user_agent": True,
     },
     "places_journal": {
         "name": "Places Journal",
@@ -148,31 +146,6 @@ SOURCES = {
         "category": "urbanism",
         "scrape_timeout": 20000,
     },
-    "metropolis": {
-        "name": "Metropolis",
-        "domains": ["metropolismag.com", "www.metropolismag.com"],
-        "tier": 2,
-        "region": "north_america",
-        "custom_scraper": True,
-    },
-
-    "landscape_architecture_magazine": {
-        "name": "Landscape Architecture Magazine",
-        "domains": ["landscapearchitecturemagazine.org"],
-        "tier": 2,
-        "region": "north_america",
-        "category": "landscape",
-        "custom_scraper": True,
-    },
-    "world_landscape_architect": {
-        "name": "World Landscape Architect",
-        "domains": ["worldlandscapearchitect.com"],
-        "tier": 2,
-        "region": "international",
-        "category": "landscape",
-        "custom_scraper": True,
-    },
-
 
     # =========================================================================
     # TIER 2 - Europe
@@ -196,21 +169,7 @@ SOURCES = {
         "category": "russia",
         "scrape_timeout": 20000,
     },
-    "domus": {
-        "name": "Domus",
-        "domains": ["domusweb.it", "www.domusweb.it"],
-        "tier": 2,
-        "region": "europe",
-        "custom_scraper": True,
-    },
-    "metalocus": {
-        "name": "Metalocus",
-        "domains": ["metalocus.es", "www.metalocus.es"],
-        "tier": 2,
-        "region": "europe",
-        "custom_scraper": True,
-    },
-    
+
     # =========================================================================
     # TIER 2 - Asia-Pacific
     # =========================================================================
@@ -255,13 +214,6 @@ SOURCES = {
         "region": "asia_pacific",
         "scrape_timeout": 20000,
     },
-    "japan_architects": {
-        "name": "Japan Architects",
-        "domains": ["japan-architects.com", "www.japan-architects.com"],
-        "tier": 2,
-        "region": "asia_pacific",
-        "custom_scraper": True,
-    },
 
     # =========================================================================
     # TIER 2 - Latin America
@@ -297,75 +249,7 @@ SOURCES = {
         "category": "computational",
         "scrape_timeout": 20000,
     },
-    "identity": {
-        "id": "identity",
-        "name": "Identity Magazine",
-        "domains": ["identity.ae", "www.identity.ae"],
-        "tier": 2,
-        "region": "middle_east",
-        "custom_scraper": True,  # Uses visual AI scraper
-    },
-
-    # =========================================================================
-    # TIER 2 - Asia (Custom Scrapers)
-    # =========================================================================
-
-    "archiposition": {
-        "id": "archiposition",
-        "name": "Archiposition",
-        "domains": ["archiposition.com", "www.archiposition.com"],
-        "tier": 2,
-        "region": "asia_pacific",
-        "custom_scraper": True,  # Uses visual AI scraper + cloudscraper for 403
-    },
-    "gooood": {
-        "id": "gooood",
-        "name": "Gooood",
-        "domains": ["gooood.cn", "www.gooood.cn"],
-        "tier": 2,
-        "region": "asia_pacific",
-        "custom_scraper": True,  # Uses visual AI scraper
-    },
-
-    # =========================================================================
-    # TIER 2 - Europe (Custom Scrapers)
-    # =========================================================================
-
-    "prorus": {
-        "id": "prorus",
-        "name": "ProRus",
-        "domains": ["prorus.ru", "www.prorus.ru"],
-        "tier": 2,
-        "region": "europe",
-        "custom_scraper": True,  # Uses visual AI scraper
-    },
-    "bauwelt": {
-        "id": "bauwelt",
-        "name": "Bauwelt",
-        "domains": ["bauwelt.de", "www.bauwelt.de"],
-        "tier": 2,
-        "region": "europe",
-        "custom_scraper": True,  # Uses visual AI scraper
-    },
 }
-
-
-# =============================================================================
-# REMOVED SOURCES (for reference)
-# =============================================================================
-# The following sources were removed due to feed issues:
-#
-# HTTP 403 (IP blocked - may work on Railway):
-#   - AGGRESSIVE BLOCKING, TRIED EVERYTHING landezine: http://www.landezine.com/feed (EUROPE) 
-#   - ADD WITH SCRAPING (instead of spoon tamago) https://www.japan-architects.com/en
-#   - PUT ON HOLD - IMAGES BROKEN aasarchitecture: https://aasarchitecture.com/feed/
-#
-#   - MOVE TO SCRAPING metropolis: https://metropolismag.com/projects/
-#   - MOVE TO SCRAPING metalocus: https://www.metalocus.es/en (EUROPE)
-#   - NO NEW PUBLICATIONS SINCE 2018 archidatum: https://www.archidatum.com/ (AFRICA)
-#   - MOVE TO SCRAPING domus: https://www.domusweb.it/ (EUROPE)
-
-# =============================================================================
 
 
 # =============================================================================
@@ -453,7 +337,7 @@ def get_sources_by_tier(tier: int) -> list[dict]:
     """Get all sources for a specific tier."""
     result = []
     for source_id, config in SOURCES.items():
-        if config.get("tier") == tier and config.get("rss_url"):
+        if config.get("tier") == tier:
             result.append({"id": source_id, **config})
     return result
 
@@ -462,50 +346,35 @@ def get_sources_by_region(region: str) -> list[dict]:
     """Get all sources for a specific region."""
     result = []
     for source_id, config in SOURCES.items():
-        if config.get("region") == region and config.get("rss_url"):
+        if config.get("region") == region:
             result.append({"id": source_id, **config})
     return result
+
 
 def get_source_ids_by_tier(tier: int) -> list[str]:
     """Get list of source IDs for a specific tier."""
     return [
         source_id for source_id, config in SOURCES.items()
-        if config.get("tier") == tier and config.get("rss_url")
+        if config.get("tier") == tier
     ]
 
 
 def get_all_source_ids() -> list[str]:
-    """Get all source IDs that have RSS feeds configured."""
-    return [
-        source_id for source_id, config in SOURCES.items()
-        if config.get("rss_url")
-    ]
+    """Get all source IDs."""
+    return list(SOURCES.keys())
 
-def get_custom_scraper_ids() -> list[str]:
-    """Get all source IDs that use custom scrapers."""
-    return [
-        source_id for source_id, config in SOURCES.items()
-        if config.get("custom_scraper")
-    ]
-
-def get_all_active_source_ids() -> list[str]:
-    """Get all source IDs (both RSS and custom scrapers)."""
-    return [
-        source_id for source_id, config in SOURCES.items()
-        if config.get("rss_url") or config.get("custom_scraper")
-    ]
 
 def is_custom_scraper(source_id: str) -> bool:
-    """Check if a source uses custom scraper."""
-    config = SOURCES.get(source_id, {})
-    return config.get("custom_scraper", False)
+    """Check if a source uses custom scraper. Always False for RSS-only service."""
+    return False
+
 
 def get_source_stats() -> dict:
     """Get statistics about configured sources."""
     stats = {
         "total": len(SOURCES),
-        "rss_sources": len([s for s in SOURCES.values() if s.get("rss_url")]),
-        "custom_scrapers": len([s for s in SOURCES.values() if s.get("custom_scraper")]),
+        "rss_sources": len(SOURCES),
+        "custom_scrapers": 0,
         "by_tier": {},
         "by_region": {},
     }
@@ -526,13 +395,11 @@ def get_source_stats() -> dict:
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("Architecture News Sources")
+    print("ADUmedia RSS Sources")
     print("=" * 50)
 
     stats = get_source_stats()
-    print(f"\nTotal sources: {stats['total']}")
-    print(f"  RSS sources: {stats['rss_sources']}")
-    print(f"  Custom scrapers: {stats['custom_scrapers']}")
+    print(f"\nTotal RSS sources: {stats['total']}")
 
     print("\nBy Tier:")
     for tier, count in sorted(stats["by_tier"].items()):
@@ -542,11 +409,8 @@ if __name__ == "__main__":
     for region, count in sorted(stats["by_region"].items()):
         print(f"  {region}: {count}")
 
-    print("\nRSS Sources:")
+    print("\nAll RSS Sources:")
     for source in get_all_rss_sources():
         print(f"  {source['id']:25} [{source['tier']}] {source['name']}")
 
-    print("\nCustom Scrapers:")
-    for source_id in get_custom_scraper_ids():
-        config = SOURCES[source_id]
-        print(f"  {source_id:25} [{config['tier']}] {config['name']}")
+
