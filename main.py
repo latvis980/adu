@@ -164,7 +164,7 @@ def filter_articles(articles: list, llm) -> tuple[list, list]:
 
             if result.get("include", True):
                 included.append(article)
-                print(f"      [OK] Included")
+                print("      [OK] Included")
             else:
                 excluded.append(article)
                 print(f"      [SKIP] Excluded: {result.get('reason', 'N/A')}")
