@@ -634,7 +634,7 @@ if __name__ == "__main__":
     fetcher = RSSFetcher()
 
     # Test individual sources
-    test_sources = ["archdaily", "dezeen", "archpaper"]
+    test_sources = ["archdaily", "dezeen"]
 
     for source_id in test_sources:
         print(f"\n{'='*40}")
@@ -654,7 +654,7 @@ if __name__ == "__main__":
 
     all_articles = fetcher.fetch_all_sources(
         hours=24, 
-        source_ids=["archdaily", "dezeen", "archpaper"],
+        source_ids=["archdaily", "dezeen"],
         max_per_source=2
     )
 

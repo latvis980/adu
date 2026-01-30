@@ -60,15 +60,6 @@ SOURCES = {
         "region": "uk",
         "scrape_timeout": 20000,
     },
-    "archpaper": {
-        "name": "The Architect's Newspaper",
-        "domains": ["archpaper.com", "www.archpaper.com"],
-        "rss_url": "https://www.archpaper.com/feed",
-        "tier": 1,
-        "region": "north_america",
-        "scrape_timeout": 20000,
-        "requires_user_agent": True,
-    },
 
     # =========================================================================
     # TIER 2 - North America

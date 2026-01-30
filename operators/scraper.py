@@ -82,12 +82,10 @@ class ArticleScraper:
             'dezeen.com': 25000,
             'designboom.com': 20000,
             'architizer.com': 20000,
-            'archpaper.com': 25000,  # Increased - site needs more time
         }
 
         # Sites that need networkidle wait (heavy JavaScript/dynamic content)
         self.networkidle_domains = {
-            'archpaper.com',  # WordPress with dynamic loading
             'nextcity.org',   # Also needs more wait time
         }
 
