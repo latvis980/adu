@@ -326,12 +326,22 @@ class R2Storage:
 
         # Process and upload image if available
         if image_bytes:
-            # Get original URL from article
+            # Get image info from article
             hero_image = article.get("hero_image", {})
             image_url = hero_image.get("url", "")
 
-            # Determine extension from URL or default to jpg
-            extension = self._get_image_extension(image_url) if image_url else "jpg"
+            # CRITICAL: Use the CONVERTED content_type, not the original URL
+            # main.py converts WebP to JPEG and sets content_type = "image/jpeg"
+            content_type = hero_image.get("content_type", "image/jpeg")
+
+            # Get extension from converted content_type (not original URL!)
+            if content_type == "image/jpeg":
+                extension = "jpg"
+            elif content_type == "image/png":
+                extension = "png"
+            else:
+                # Fallback to URL-based detection for other formats
+                extension = self._get_image_extension(image_url, content_type)
 
             # Build paths
             image_path = self._build_image_path(source_id, index, extension, target_date)
