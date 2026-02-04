@@ -15,6 +15,7 @@ Usage:
 """
 
 import json
+import re
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 
 
@@ -27,7 +28,7 @@ TARGET_LANGUAGES = {
 }
 
 # System prompt for translation
-TRANSLATE_SYSTEM_PROMPT = """You are a professional translator specialising in architecture, design, and urbanism.
+TRANSLATE_SYSTEM_PROMPT = """You are a professional translator specializing in architecture, design, and urbanism.
 Your task is to translate article headlines and summaries accurately into multiple languages.
 
 Guidelines:
@@ -40,7 +41,8 @@ Guidelines:
 - For architect/bureau names after the slash: never translate these, keep them exactly as in the original
 - PT-BR means Brazilian Portuguese, not European Portuguese
 
-You must respond with valid JSON only. No markdown, no backticks, no explanation."""
+CRITICAL: You must respond with ONLY valid JSON. No markdown, no backticks, no preamble, no explanation.
+The JSON must be properly escaped - use \\n for newlines, \\" for quotes, \\\\ for backslashes."""
 
 # User message template
 TRANSLATE_USER_TEMPLATE = """Translate the following headline and summary into {languages_list}.
@@ -51,14 +53,43 @@ HEADLINE:
 SUMMARY:
 {summary}
 
-Respond with ONLY a JSON object in this exact format (no markdown, no backticks):
-{{"headline": {{"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}}, "summary": {{"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}}}}"""
+Respond with ONLY this JSON structure (no markdown, no backticks, no extra text):
+{{"headline": {{"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}}, "summary": {{"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}}}}
+
+Remember: All quotes and special characters must be properly escaped in the JSON."""
 
 # Combined ChatPromptTemplate for LangChain
 TRANSLATE_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate.from_template(TRANSLATE_SYSTEM_PROMPT),
     HumanMessagePromptTemplate.from_template(TRANSLATE_USER_TEMPLATE),
 ])
+
+
+def clean_json_response(text: str) -> str:
+    """
+    Clean up AI response to extract pure JSON.
+
+    Handles common issues:
+    - Markdown code blocks
+    - Text before/after JSON
+    - Multiple JSON objects (takes first)
+    """
+    text = text.strip()
+
+    # Remove markdown code blocks
+    text = re.sub(r'^```(?:json)?\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+    text = text.strip()
+
+    # Try to find JSON object bounds
+    # Look for the first { and last }
+    start = text.find('{')
+    end = text.rfind('}')
+
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end+1]
+
+    return text
 
 
 def parse_translation_response(response_text: str) -> dict:
@@ -73,17 +104,8 @@ def parse_translation_response(response_text: str) -> dict:
         language code -> translated text mappings.
         Returns empty dicts on parse failure.
     """
-    # Clean up common AI response issues
-    text = response_text.strip()
-
-    # Remove markdown code block wrappers if present
-    if text.startswith("```json"):
-        text = text[7:]
-    elif text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    text = text.strip()
+    # Clean up response
+    text = clean_json_response(response_text)
 
     try:
         parsed = json.loads(text)
@@ -114,15 +136,24 @@ def parse_translation_response(response_text: str) -> dict:
             "summary": summary_translations,
         }
 
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        print(f"      [WARN] Failed to parse translation response: {e}")
+    except json.JSONDecodeError as e:
+        # More detailed error logging
+        print(f"      [WARN] Failed to parse translation JSON: {e}")
+        print(f"      [DEBUG] First 200 chars: {text[:200]}")
+        print(f"      [DEBUG] Last 200 chars: {text[-200:]}")
+        return {
+            "headline": {},
+            "summary": {},
+        }
+    except (KeyError, TypeError) as e:
+        print(f"      [WARN] Invalid translation structure: {e}")
         return {
             "headline": {},
             "summary": {},
         }
 
 
-def translate_article(article: dict, llm) -> dict:
+def translate_article(article: dict, llm, max_tokens: int = 2000) -> dict:
     """
     Translate a single article's headline and summary to all target languages.
 
@@ -133,6 +164,7 @@ def translate_article(article: dict, llm) -> dict:
     Args:
         article: Article dict with 'headline' and 'ai_summary' keys
         llm: LangChain LLM instance
+        max_tokens: Maximum tokens for response (default 2000 for 4 languages)
 
     Returns:
         Article dict with translation fields added
@@ -151,8 +183,17 @@ def translate_article(article: dict, llm) -> dict:
     )
 
     try:
-        # Create and invoke the chain
+        # Create and invoke the chain with higher token limit
         chain = TRANSLATE_PROMPT_TEMPLATE | llm
+
+        # Bind max_tokens if the LLM supports it
+        try:
+            llm_with_tokens = llm.bind(max_tokens=max_tokens)
+            chain = TRANSLATE_PROMPT_TEMPLATE | llm_with_tokens
+        except:
+            # If binding fails, use the chain as-is
+            pass
+
         response = chain.invoke({
             "headline": headline,
             "summary": summary,
@@ -167,25 +208,26 @@ def translate_article(article: dict, llm) -> dict:
         # Log success
         lang_count = len(article["ai_summary_translations"])
         if lang_count > 0:
-            print(f"      Translated to {lang_count} languages")
+            print(f"      ✅ Translated to {lang_count} languages")
         else:
-            print(f"      [WARN] No translations produced")
+            print(f"      ⚠️  No translations produced")
 
     except Exception as e:
-        print(f"      [WARN] Translation failed: {e}")
+        print(f"      ❌ Translation failed: {e}")
         article["headline_translations"] = {}
         article["ai_summary_translations"] = {}
 
     return article
 
 
-def translate_articles(articles: list, llm) -> list:
+def translate_articles(articles: list, llm, max_tokens: int = 2000) -> list:
     """
     Translate all articles in a list.
 
     Args:
         articles: List of article dicts with headline and ai_summary
         llm: LangChain LLM instance
+        max_tokens: Maximum tokens for each translation (default 2000)
 
     Returns:
         Articles with translation fields added
@@ -197,7 +239,7 @@ def translate_articles(articles: list, llm) -> list:
         source_name = article.get("source_name", article.get("source_id", "Unknown"))
         print(f"   [{i}/{len(articles)}] [{source_name}] {title[:40]}...")
 
-        translate_article(article, llm)
+        translate_article(article, llm, max_tokens=max_tokens)
 
     # Stats
     translated_count = sum(
