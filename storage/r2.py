@@ -404,6 +404,8 @@ class R2Storage:
             "headline": article.get("headline", ""),
             "ai_summary": article.get("ai_summary", ""),
             "tag": article.get("tag", ""),
+            "headline_translations": article.get("headline_translations", {}),
+            "ai_summary_translations": article.get("ai_summary_translations", {}),
             "image": {
                 "filename": image_filename,
                 "r2_path": image_path,

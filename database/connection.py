@@ -131,6 +131,8 @@ def record_article_to_db(
         "r2_path": r2_path,
         "r2_image_path": r2_image_path,
         "fetch_date": date.today().isoformat(),
+        "headline_translations": article.get("headline_translations", {}),
+        "ai_summary_translations": article.get("ai_summary_translations", {}),
         "status": status,
     }
     

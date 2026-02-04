@@ -63,6 +63,7 @@ from config.sources import (
     get_source_ids_by_tier,
     get_all_source_ids,
 )
+from prompts.translate import translate_articles
 
 # Default configuration
 DEFAULT_HOURS_LOOKBACK = 24
@@ -553,6 +554,19 @@ async def run_pipeline(
                     article["ai_summary"] = article.get("description", "")[:200] + "..."
                     article["tag"] = ""
 
+        # =================================================================
+        # Step 4.5: Translate Summaries
+        # =================================================================
+        print("\n[STEP 4.5] Translating summaries...")
+
+        try:
+            if not llm:
+                llm = create_llm()
+            articles = translate_articles(articles, llm)
+        except Exception as e:
+            print(f"   [ERROR] Translation failed: {e}")
+            print("   Continuing without translations...")
+        
         # =================================================================
         # Step 5: Download Hero Images
         # =================================================================
