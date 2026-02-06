@@ -180,14 +180,6 @@ SOURCES = {
         "region": "asia_pacific",
         "scrape_timeout": 20000,
     },
-    "architecture_update": {
-        "name": "Architecture Update",
-        "domains": ["architectureupdate.in", "www.architectureupdate.in"],
-        "rss_url": "https://architectureupdate.in/feed",
-        "tier": 2,
-        "region": "asia_pacific",
-        "scrape_timeout": 20000,
-    },
     "indesignlive_sg": {
         "name": "Indesign Live Singapore",
         "domains": ["indesignlive.sg", "www.indesignlive.sg"],

@@ -555,14 +555,12 @@ async def run_pipeline(
                     article["tag"] = ""
 
         # =================================================================
-        # Step 4.5: Translate Summaries
+        # Step 4.5: Translate Summaries (DeepL)
         # =================================================================
         print("\n[STEP 4.5] Translating summaries...")
 
         try:
-            if not llm:
-                llm = create_llm()
-            articles = translate_articles(articles, llm)
+            articles = translate_articles(articles)
         except Exception as e:
             print(f"   [ERROR] Translation failed: {e}")
             print("   Continuing without translations...")
