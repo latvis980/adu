@@ -357,7 +357,7 @@ class R2Storage:
                     Key=image_path,
                     Body=image_bytes,
                     ContentType=content_type,
-                    CacheControl="public, max-age=31536000"
+                    CacheControl="public, max-age=3600"
                 )
                 has_image = True
                 print(f"      ✅ Uploaded full-size: {image_path}")
@@ -376,7 +376,7 @@ class R2Storage:
                             Key=thumbnail_path,
                             Body=thumbnail_bytes,
                             ContentType="image/jpeg",
-                            CacheControl="public, max-age=31536000"
+                            CacheControl="public, max-age=3600"
                         )
 
                         # Calculate size reduction for logging
