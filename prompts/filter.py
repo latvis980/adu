@@ -33,6 +33,7 @@ INCLUDE articles about:
 - Well-known or award-winning architecture firms (Zaha Hadid, BIG, OMA, Foster + Partners, Herzog & de Meuron, SANAA, Renzo Piano, Snohetta, MVRDV, etc.)
 - Famous architects (Norman Foster, Richard Rogers, Tadao Ando, etc.)
 - Public buildings: museums, libraries, theaters, stadiums, airports, stations
+- Large residential projects with explicitely mentioned architectural firm or bureau (housing complexes, major apartment buildings in world capitals, mixed-use developments)
 - Urban planning and masterplans
 - Educational and healthcare facilities
 - Mixed-use and commercial developments
@@ -55,7 +56,6 @@ EXCLUDE articles about:
 - Retail store fit-outs (unless flagship by major firm)
 - Restaurant/cafe/bar interiors
 - Office interior redesigns
-- Residential real estate listings
 - DIY or home decor content
 
 Be strict: when in doubt about private residences or interiors, EXCLUDE.
