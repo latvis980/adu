@@ -214,15 +214,15 @@ SOURCES = {
     # TIER 2 - Middle East / Computational
     # =========================================================================
 
-    "parametric_architecture": {
-        "name": "Parametric Architecture",
-        "domains": ["parametric-architecture.com", "www.parametric-architecture.com"],
-        "rss_url": "https://parametric-architecture.com/feed/",
-        "tier": 2,
-        "region": "middle_east",
-        "category": "computational",
-        "scrape_timeout": 20000,
-    },
+    # "parametric_architecture": {
+    # "name": "Parametric Architecture",
+    # "domains": ["parametric-architecture.com", "www.parametric-architecture.com"],
+    # "rss_url": "https://parametric-architecture.com/feed/",
+    # "tier": 2,
+    # "region": "middle_east",
+    # "category": "computational",
+    # "scrape_timeout": 20000,
+# },
 }
 
 
