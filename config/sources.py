@@ -39,7 +39,7 @@ SOURCES = {
     "dezeen": {
         "name": "Dezeen",
         "domains": ["dezeen.com", "www.dezeen.com"],
-        "rss_url": "http://feeds.feedburner.com/dezeen",
+        "rss_url": "https://www.dezeen.com/feed/",
         "tier": 1,
         "region": "uk",
         "scrape_timeout": 25000,
@@ -205,15 +205,15 @@ SOURCES = {
     # TIER 2 - Middle East / Computational
     # =========================================================================
 
-    # "parametric_architecture": {
-    # "name": "Parametric Architecture",
-    # "domains": ["parametric-architecture.com", "www.parametric-architecture.com"],
-    # "rss_url": "https://parametric-architecture.com/feed/",
-    # "tier": 2,
-    # "region": "middle_east",
-    # "category": "computational",
-    # "scrape_timeout": 20000,
-# },
+    "parametric_architecture": {
+    "name": "Parametric Architecture",
+    "domains": ["parametric-architecture.com", "www.parametric-architecture.com"],
+    "rss_url": "https://parametric-architecture.com/feed/",
+    "tier": 2,
+    "region": "middle_east",
+    "category": "computational",
+    "scrape_timeout": 20000,
+ },
 }
 
 
