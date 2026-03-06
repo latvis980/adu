@@ -75,6 +75,16 @@ SOURCES = {
         "is_studio": True,
     },
 
+    "west8": {
+        "name": "West 8",
+        "domains": ["west8.com", "www.west8.com"],
+        "rss_url": "https://www.west8.com/feed/",
+        "tier": 2,
+        "region": "europe",
+        "scrape_timeout": 20000,
+        "is_studio": True,
+    },
+
     # =========================================================================
     # TIER 2 - North America
     # =========================================================================
