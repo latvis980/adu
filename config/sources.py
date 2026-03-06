@@ -62,6 +62,20 @@ SOURCES = {
     },
 
     # =========================================================================
+    # TIER 1.5 - Studio Websites
+    # =========================================================================
+
+    "zaha_hadid": {
+        "name": "Zaha Hadid Architects",
+        "domains": ["zaha-hadid.com", "www.zaha-hadid.com"],
+        "rss_url": "https://www.zaha-hadid.com/feed/",
+        "tier": 2,
+        "region": "uk",
+        "scrape_timeout": 20000,
+        "is_studio": True,
+    },
+
+    # =========================================================================
     # TIER 2 - North America
     # =========================================================================
 
@@ -290,6 +304,11 @@ def get_source_rss(source_id: str) -> Optional[str]:
 # =============================================================================
 # Filtering Functions
 # =============================================================================
+
+def is_studio_source(source_id: str) -> bool:
+    """Check if a source is a studio (not a media publication)."""
+    config = SOURCES.get(source_id, {})
+    return config.get("is_studio", False)
 
 def get_all_rss_sources() -> list[dict]:
     """Get all sources that have RSS feeds."""

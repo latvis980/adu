@@ -57,11 +57,12 @@ from database.connection import record_batch_to_db, test_connection as test_db_c
 # Import prompts and config
 from prompts.summarize import SUMMARIZE_PROMPT_TEMPLATE
 from prompts.filter import FILTER_PROMPT_TEMPLATE, parse_filter_response
+from prompts.filter_studio import STUDIO_FILTER_PROMPT_TEMPLATE, parse_studio_filter_response
 from config.sources import (
     SOURCES,
     get_source_config,
     get_source_ids_by_tier,
-    get_all_source_ids,
+    get_all_source_ids, is_studio_source,
 )
 from prompts.translate import translate_articles
 
@@ -122,46 +123,50 @@ def parse_args():
 def filter_articles(articles: list, llm) -> tuple[list, list]:
     """
     Filter articles using AI - runs BEFORE summarization.
-
-    Uses scraped full_content for better accuracy.
-
-    Args:
-        articles: List of articles with scraped content
-        llm: LLM instance
-
-    Returns:
-        Tuple of (included_articles, excluded_articles)
+    Uses stricter filter for studio sources.
     """
     print(f"\n[FILTER] AI content filtering {len(articles)} articles...")
 
     included = []
     excluded = []
 
-    # Create the chain once
-    filter_chain = FILTER_PROMPT_TEMPLATE | llm
+    # Create chains
+    media_chain = FILTER_PROMPT_TEMPLATE | llm
+    studio_chain = STUDIO_FILTER_PROMPT_TEMPLATE | llm
 
     for i, article in enumerate(articles, 1):
         title = article.get("title", "No title")
-        source_name = article.get("source_name", article.get("source_id", "Unknown"))
-        print(f"   [{i}/{len(articles)}] [{source_name}] {title[:40]}...")
+        source_id = article.get("source_id", "")
+        source_name = article.get("source_name", source_id or "Unknown")
+        is_studio = is_studio_source(source_id)
+
+        label = f"[STUDIO] [{source_name}]" if is_studio else f"[{source_name}]"
+        print(f"   [{i}/{len(articles)}] {label} {title[:40]}...")
 
         try:
-            # Use scraped full_content for filtering (most accurate)
-            # Fall back to description if full_content not available
             content_for_filter = (
                 article.get("full_content", "") or 
                 article.get("content", "") or 
                 article.get("description", "")
             )
 
-            # Invoke the chain with proper parameters
-            response = filter_chain.invoke({
-                "title": title,
-                "description": article.get("description", "")[:500],
-                "content": content_for_filter[:1000]  # Use scraped content
-            })
-
-            result = parse_filter_response(response.content)
+            if is_studio:
+                # Stricter studio filter
+                response = studio_chain.invoke({
+                    "studio_name": source_name,
+                    "title": title,
+                    "description": article.get("description", "")[:500],
+                    "content": content_for_filter[:1000]
+                })
+                result = parse_studio_filter_response(response.content)
+            else:
+                # Regular media filter
+                response = media_chain.invoke({
+                    "title": title,
+                    "description": article.get("description", "")[:500],
+                    "content": content_for_filter[:1000]
+                })
+                result = parse_filter_response(response.content)
 
             if result.get("include", True):
                 included.append(article)
@@ -191,12 +196,12 @@ def generate_summaries(articles: list, llm, prompt_template) -> list:
             summarized = summarize_article(article, llm, prompt_template)
             article["headline"] = summarized.get("headline", "")
             article["ai_summary"] = summarized.get("ai_summary", "")
-            article["tags"] = summarized.get("tags", "")
+            article["tags"] = summarized.get("tags", [])
         except Exception as e:
             print(f"      [WARN] Error: {e}")
             article["headline"] = article.get("title", "")
             article["ai_summary"] = article.get("description", "")[:200] + "..."
-            article["tags"] = ""
+            article["tags"] = []
 
     return articles
 
