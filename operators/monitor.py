@@ -170,7 +170,7 @@ def summarize_article(article: dict, llm, prompt_template) -> dict:
     # Add to article
     article["headline"] = parsed["headline"]
     article["ai_summary"] = parsed["summary"]
-    article["tag"] = parsed["tag"]
+    article["tags"] = parsed.get("tags", [])
 
     return article
 

@@ -403,7 +403,7 @@ class R2Storage:
             "published": article.get("published"),
             "headline": article.get("headline", ""),
             "ai_summary": article.get("ai_summary", ""),
-            "tag": article.get("tag", ""),
+            "tags": article.get("tags", []),
             "headline_translations": article.get("headline_translations", {}),
             "ai_summary_translations": article.get("ai_summary_translations", {}),
             "image": {
