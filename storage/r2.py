@@ -41,6 +41,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from utils.thumbnails import ThumbnailGenerator, get_thumbnail_path
+from config.sources import is_studio_source
 
 
 class R2Storage:
@@ -398,7 +399,7 @@ class R2Storage:
             "index": index,
             "source_id": source_id,
             "source_name": article.get("source_name", source_id),
-            "title": article.get("title", ""),
+            "is_studio": is_studio_source(source_id),
             "link": article.get("link", ""),
             "published": article.get("published"),
             "headline": article.get("headline", ""),
