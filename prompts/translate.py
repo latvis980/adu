@@ -69,49 +69,56 @@ def _translate_text(translator: deepl.Translator, text: str, target_lang: str) -
 
 def translate_article(article: dict) -> dict:
     """
-    Translate a single article's headline and summary to all target languages.
+    Translate a single article's headline lines and summary to all target languages.
 
-    Adds two new keys to the article dict:
-    - headline_translations: {"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}
+    Adds four new keys to the article dict:
+    - headline_line_1_translations: {"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}
+    - headline_line_2_translations: {"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}
     - ai_summary_translations: {"es": "...", "fr": "...", "pt-br": "...", "ru": "..."}
 
     Args:
-        article: Article dict with 'headline' and 'ai_summary' keys
+        article: Article dict with 'headline_line_1', 'headline_line_2', and 'ai_summary' keys
 
     Returns:
         Article dict with translation fields added
     """
-    headline = article.get("headline", "")
+    line1 = article.get("headline_line_1", "")
+    line2 = article.get("headline_line_2", "")
     summary = article.get("ai_summary", "")
 
-    if not headline and not summary:
-        article["headline_translations"] = {}
+    if not line1 and not line2 and not summary:
+        article["headline_line_1_translations"] = {}
+        article["headline_line_2_translations"] = {}
         article["ai_summary_translations"] = {}
         return article
 
     try:
         translator = _get_translator()
 
-        headline_translations = {}
+        line1_translations = {}
+        line2_translations = {}
         summary_translations = {}
 
         for internal_code, deepl_code in TARGET_LANGUAGES.items():
-            # Translate headline
-            if headline:
-                translated_headline = _translate_text(translator, headline, deepl_code)
-                if translated_headline:
-                    headline_translations[internal_code] = translated_headline
+            if line1:
+                t = _translate_text(translator, line1, deepl_code)
+                if t:
+                    line1_translations[internal_code] = t
 
-            # Translate summary
+            if line2:
+                t = _translate_text(translator, line2, deepl_code)
+                if t:
+                    line2_translations[internal_code] = t
+
             if summary:
-                translated_summary = _translate_text(translator, summary, deepl_code)
-                if translated_summary:
-                    summary_translations[internal_code] = translated_summary
+                t = _translate_text(translator, summary, deepl_code)
+                if t:
+                    summary_translations[internal_code] = t
 
-        article["headline_translations"] = headline_translations
+        article["headline_line_1_translations"] = line1_translations
+        article["headline_line_2_translations"] = line2_translations
         article["ai_summary_translations"] = summary_translations
 
-        # Log success
         lang_count = len(summary_translations)
         if lang_count > 0:
             print(f"      ✅ Translated to {lang_count} languages")
@@ -120,7 +127,8 @@ def translate_article(article: dict) -> dict:
 
     except Exception as e:
         print(f"      ❌ Translation failed: {e}")
-        article["headline_translations"] = {}
+        article["headline_line_1_translations"] = {}
+        article["headline_line_2_translations"] = {}
         article["ai_summary_translations"] = {}
 
     return article
