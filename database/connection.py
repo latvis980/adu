@@ -136,6 +136,7 @@ def record_article_to_db(
         "headline_line_2_translations": article.get("headline_line_2_translations", {}),
         "ai_summary_translations": article.get("ai_summary_translations", {}),
         "status": status,
+        "is_studio": article.get("is_studio", False), 
     }
 
     try:
