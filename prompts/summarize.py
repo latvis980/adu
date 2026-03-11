@@ -17,7 +17,7 @@ Guidelines:
 - Header line 1: PROJECT NAME / ARCHITECT OR BUREAU (e.g., "Cloud 11 Office Complex / Snøhetta"). If the architect or bureau is unknown, don't write anything, just the name of the project. DO NOT write Unknown in the title
 - Header line 2: TYPOLOGY / CITY, COUNTRY (e.g., "Commercial / Tokyo, Japan"). If any part is unavailable, simply skip that part. Never write "Unknown" or "Various". If the entire line would be empty, skip it entirely.
 - For news articles about projects, write a two-sentence summary in a professional British editorial style. Sentence 1: state project name, location, architect/studio (if explicitely mentioned), typology, scale (if mentioned) and key design features (if mentioned). Sentence 2: state key details about the project — status, significance, planning context, or professional response. 
-- If the news article is not about a project, but about another related topic, write a 2-sentence summary of the article for professional audience.
+- If the news article is not about a project, but about another related topic, write a 2-sentence summary of the article for professional audience, do not use expressions like "the artice discusses", just summarize it. 
 - Add appropriate tag from this list: #residential, #hospitality, #office, #culture, #education, #public, #infrastructure, #landscape, #retail, #interior, #masterplan, #reuse, #mixeduse
 - If the project name is in the language that doesn't match the country language (for example, in ArchDaily Brasil a project in China is named in Portuguese), translate the name of the project to English
 - Keep tone neutral and factual, avoid generic praise and subjective adjectives
