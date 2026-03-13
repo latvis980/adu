@@ -385,6 +385,7 @@ def save_candidates_to_r2(articles: list, r2: R2Storage) -> dict:
 
             # Store original article in result for DB recording
             result["article"] = article
+            article["is_studio"] = is_studio_source(article.get("source_id", ""))
 
             candidates.append(result)
             saved_count += 1
